@@ -1,0 +1,20 @@
+{
+    "api": {
+      "setup_url": "https://console.cloud.google.com/apis/credentials",
+      "client_id": "693640019298-tsl4bejqaqnpfnri6b47lj1m6gfp07rq.apps.googleusercontent.com",
+      "client_secret": "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",
+      "scopes": "https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email"
+    },
+    "directory": {
+      "team_drive": ""
+    },
+    "components": {
+      "HeaderImage": {
+        "homepage_url": "https://metatech-report-generation.vercel.app/",
+        "logo_url": "https://www.google.com/url?sa=i&url=http%3A%2F%2Fworkspaceupdates.googleblog.com%2F2018%2F02%2Fcomment-on-files-in-drive-preview-mode.html&psig=AOvVaw1XEXVrlQJSeRvFdvjclG9N&ust=1743585579466000&source=images&cd=vfe&opi=89978449&ved=0CBUQjRxqFwoTCOCs38zAtowDFQAAAAAdAAAAABAK",
+        "logo_alt": "MY CUSTOM GOOGLE DRIVE DIRECTORY",
+        "logo_width": "300px",
+        "logo_color": "#5b777d"
+      }
+    }
+  }
