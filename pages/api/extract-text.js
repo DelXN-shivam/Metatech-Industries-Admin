@@ -1,8 +1,8 @@
 import { IncomingForm } from 'formidable';
 import fs from 'fs';
-import path from 'path';
+// import path from 'path';
 import mammoth from 'mammoth';
-import pdfParse from 'pdf-parse';
+// import pdfParse from 'pdf-parse';
 import WordExtractor from 'word-extractor';
 import libreoffice from 'libreoffice-convert';
 import { promisify } from 'util';
@@ -72,9 +72,7 @@ export default async function handler(req, res) {
         const validTypes = [
           'application/msword', // .doc
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-          'application/pdf', // .pdf
-          'application/vnd.oasis.opendocument.text', // .odt
-          'text/plain', // .txt
+          // 'application/pdf', // .pdf
         ];
       
         if (!validTypes.includes(file.mimetype)) {
@@ -88,18 +86,18 @@ export default async function handler(req, res) {
           // Process different file types
           if (file.mimetype === 'application/msword') {
             extractedText = await extractFromDoc(buffer);
-          } else if (file.mimetype === 'application/pdf') {
-            const pdfData = await pdfParse(buffer);
-            extractedText = pdfData.text;
+          // } else if (file.mimetype === 'application/pdf') {
+          //   const pdfData = await pdfParse(buffer);
+          //   extractedText = pdfData.text;
           } else if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
             const result = await mammoth.extractRawText({ buffer });
             extractedText = result.value;
-          } else if (file.mimetype === 'text/plain') {
-            extractedText = buffer.toString('utf8');
-          } else if (file.mimetype === 'application/rtf') {
-            extractedText = buffer.toString('utf8').replace(/[^\x20-\x7E\r\n]/g, '');
-          } else if (file.mimetype === 'application/vnd.oasis.opendocument.text') {
-            extractedText = buffer.toString('utf8').replace(/[^\x20-\x7E\r\n]/g, '');
+          // } else if (file.mimetype === 'text/plain') {
+          //   extractedText = buffer.toString('utf8');
+          // } else if (file.mimetype === 'application/rtf') {
+          //   extractedText = buffer.toString('utf8').replace(/[^\x20-\x7E\r\n]/g, '');
+          // } else if (file.mimetype === 'application/vnd.oasis.opendocument.text') {
+          //   extractedText = buffer.toString('utf8').replace(/[^\x20-\x7E\r\n]/g, '');
           }
           
           // Process the extracted text
@@ -142,58 +140,71 @@ export default async function handler(req, res) {
       
       req.on('end', async () => {
         try {
-          const { fileData, mimeType } = JSON.parse(body);
-          
-          if (!fileData || !mimeType) {
+          // Support both single and batch file extraction
+          let parsed = JSON.parse(body);
+          let files = [];
+          if (Array.isArray(parsed)) {
+            files = parsed;
+          } else if (parsed.files && Array.isArray(parsed.files)) {
+            files = parsed.files;
+          } else if (parsed.fileData && parsed.mimeType) {
+            files = [parsed];
+          } else {
             return res.status(400).json({ error: 'Missing required fields' });
           }
-          
-          const buffer = Buffer.from(fileData, 'base64');
-          let extractedText = '';
-          
-          // Process based on mimeType
-          if (mimeType === 'application/msword') {
-            extractedText = await extractFromDoc(buffer);
-          } else if (mimeType === 'application/pdf') {
-            const pdfData = await pdfParse(buffer);
-            extractedText = pdfData.text;
-          } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            const result = await mammoth.extractRawText({ buffer });
-            extractedText = result.value;
-          } else if (mimeType === 'text/plain') {
-            extractedText = buffer.toString('utf8');
-          } else if (mimeType === 'application/rtf') {
-            extractedText = buffer.toString('utf8').replace(/[^\x20-\x7E\r\n]/g, '');
-          } else if (mimeType === 'application/vnd.oasis.opendocument.text') {
-            extractedText = buffer.toString('utf8').replace(/[^\x20-\x7E\r\n]/g, '');
+
+          // --- Process all files in parallel, order does not matter ---
+          const results = await Promise.all(
+            files.map(async (file, idx) => {
+              const { fileData, mimeType, fileName } = file;
+              try {
+                const buffer = Buffer.from(fileData, 'base64');
+                let extractedText = '';
+                if (mimeType === 'application/msword') {
+                  extractedText = await extractFromDoc(buffer);
+                } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                  const result = await mammoth.extractRawText({ buffer });
+                  extractedText = result.value;
+                }
+                let lines = extractedText.split(/[\r\n]+/);
+                lines = lines.map(line => 
+                  line
+                    .replace(/[^\x20-\x7E]/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                ).filter(line => line.length > 0);
+                let endIndex = -1;
+                for (let i = 0; i < lines.length; i++) {
+                  const cleanLine = lines[i].toUpperCase();
+                  if (cleanLine.includes('REFERENCE')) {
+                    endIndex = i;
+                    break;
+                  }
+                }
+                if (endIndex >= 0) {
+                  lines = lines.slice(0, endIndex + 1);
+                } else {
+                  lines = lines.slice(0, 23);
+                }
+                return {
+                  fileName: fileName || `file_${idx + 1}`,
+                  extractedText: lines.join('\n')
+                };
+              } catch (error) {
+                return {
+                  fileName: fileName || `file_${idx + 1}`,
+                  extractedText: '',
+                  error: error.message
+                };
+              }
+            })
+          );
+          // If only one file, return single result for backward compatibility
+          if (results.length === 1) {
+            return res.status(200).json({ extractedText: results[0].extractedText });
           }
-          
-          // Process the extracted text - apply the same logic as in the form upload method
-          let lines = extractedText.split(/[\r\n]+/);
-          lines = lines.map(line => 
-            line
-                .replace(/[^\x20-\x7E]/g, '')
-                .replace(/\s+/g, ' ')
-              .trim()
-            ).filter(line => line.length > 0);
-            
-          // Find the line with 'Reference' or limit to 23 lines
-          let endIndex = -1;
-          for (let i = 0; i < lines.length; i++) {
-            const cleanLine = lines[i].toUpperCase();
-            if (cleanLine.includes('REFERENCE')) {
-              endIndex = i;
-              break;
-            }
-          }
-          
-          if (endIndex >= 0) {
-            lines = lines.slice(0, endIndex + 1);
-          } else {
-            lines = lines.slice(0, 23);
-          }
-          
-          return res.status(200).json({ extractedText: lines.join('\n') });
+          return res.status(200).json({ results });
+          // --- End parallelization ---
         } catch (error) {
           console.error('Error processing file:', error);
           return res.status(500).json({ error: 'Error processing file' });

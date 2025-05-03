@@ -58,52 +58,39 @@ export default async function handler(req, res) {
     let processedFiles = 0;
     let failedFiles = [];
 
-    // Process each Excel file
-    for (const file of files) {
+    // --- START: Parallelize Excel file processing with concurrency limit ---
+    const concurrency = 5; // You can tune this value based on server resources
+
+    async function processSingleFile(file) {
       try {
         // Compress the base64 data
         const compressedData = compressBase64(file.fileData);
-        
-        // Convert base64 to buffer
         const buffer = Buffer.from(compressedData, 'base64');
-        
-        // Create a new workbook
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(buffer);
 
         let fileMatches = 0;
         let sheetsWithMatches = 0;
-
-        // Create a section for this file
         const fileSectionChildren = [
           new Paragraph({
             text: `File: ${file.fileName}`,
             heading: HeadingLevel.HEADING_1,
-            spacing: {
-              before: 30,
-              after: 30,
-            },
+            spacing: { before: 30, after: 30 },
             alignment: AlignmentType.CENTER,
           })
         ];
 
-        // Process each worksheet
         for (const worksheet of workbook.worksheets) {
           try {
             // Create rows array for the table
             const rows = [];
             let hasMatches = false;
-
-            // Get column names from the first row
             const firstRow = worksheet.getRow(1);
             const columnNames = [];
             for (let i = 1; i <= 4; i++) {
               const cellValue = firstRow.getCell(i).value;
-              // Use the actual column name from Excel, or if empty, use a default name
               columnNames.push(cellValue ? cellValue.toString().trim() : `Column ${i}`);
             }
-
-            // Add header row with original column names
             rows.push(new TableRow({
               children: [
                 new TableCell({
@@ -115,10 +102,7 @@ export default async function handler(req, res) {
                     })],
                     alignment: AlignmentType.CENTER,
                   })],
-                  width: {
-                    size: 5,
-                    type: WidthType.PERCENTAGE,
-                  },
+                  width: { size: 5, type: WidthType.PERCENTAGE },
                 }),
                 ...columnNames.map((name, index) => 
                   new TableCell({
@@ -130,42 +114,30 @@ export default async function handler(req, res) {
                       })],
                       alignment: AlignmentType.CENTER,
                     })],
-                    width: {
-                      size: index < 2 ? 15 : 35, // 15% for first two columns, 35% for last two
-                      type: WidthType.PERCENTAGE,
-                    },
+                    width: { size: index < 2 ? 15 : 35, type: WidthType.PERCENTAGE },
                   })
                 ),
               ],
             }));
 
-            // Process rows in chunks to handle large files
-            const chunkSize = 1000; // Process 1000 rows at a time
+            const chunkSize = 1000;
             const totalRows = worksheet.rowCount;
-            
             for (let startRow = 2; startRow <= totalRows; startRow += chunkSize) {
               const endRow = Math.min(startRow + chunkSize - 1, totalRows);
-              
               for (let rowNumber = startRow; rowNumber <= endRow; rowNumber++) {
                 try {
                   const row = worksheet.getRow(rowNumber);
-                  // Check if the query exists in the 4th column (index 3)
                   const fourthColumnValue = row.getCell(4).value;
                   if (fourthColumnValue && fourthColumnValue.toString().toLowerCase().includes(query.toLowerCase())) {
                     fileMatches++;
                     hasMatches = true;
-                    
-                    // Get first four columns
                     const firstFourColumns = [];
                     for (let i = 1; i <= 4; i++) {
                       const cellValue = row.getCell(i).value;
-                      // Handle different types of cell values
                       let displayValue = '';
                       if (cellValue !== null && cellValue !== undefined) {
                         if (typeof cellValue === 'object') {
-                          // For Column 3, ensure plain text
                           if (i === 3) {
-                            // Extract text content from the object
                             if (cellValue.text) {
                               displayValue = cellValue.text;
                             } else if (cellValue.richText) {
@@ -176,7 +148,6 @@ export default async function handler(req, res) {
                               displayValue = cellValue.toString().replace(/[^\x20-\x7E]/g, '');
                             }
                           } else {
-                            // Handle date objects for other columns
                             if (cellValue instanceof Date) {
                               displayValue = cellValue.toLocaleDateString();
                             } else {
@@ -189,8 +160,6 @@ export default async function handler(req, res) {
                       }
                       firstFourColumns.push(displayValue);
                     }
-
-                    // Add the row data to the rows array
                     rows.push(new TableRow({
                       children: [
                         new TableCell({
@@ -218,23 +187,16 @@ export default async function handler(req, res) {
                   }
                 } catch (err) {
                   console.error(`Error processing row ${rowNumber}:`, err);
-                  // Continue with next row
                 }
               }
             }
 
-            // Only add the sheet section if it has matches
             if (hasMatches) {
               sheetsWithMatches++;
-              
-              // Create the table with all rows
               const table = new Table({
                 rows: rows,
-                width: {
-                  size: 100,
-                  type: WidthType.PERCENTAGE,
-                },
-                columnWidths: [5, 15, 15, 35, 35], // Updated column widths
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                columnWidths: [5, 15, 15, 35, 35],
                 borders: {
                   top: { style: BorderStyle.SINGLE, size: 1, color: "000000" },
                   bottom: { style: BorderStyle.SINGLE, size: 1, color: "000000" },
@@ -244,47 +206,32 @@ export default async function handler(req, res) {
                   insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "000000" },
                 },
               });
-
-              // Add worksheet name and table to the file section
-              // fileSectionChildren.push(...)
               fileSectionChildren.push(
                 new Paragraph({
                   text: `Sheet: ${worksheet.name}`,
                   heading: HeadingLevel.HEADING_2,
-                  spacing: {
-                    before: 30,
-                    after: 30,
-                  },
+                  spacing: { before: 30, after: 30 },
                   alignment: AlignmentType.CENTER,
                 }),
                 table,
                 new Paragraph({
                   text: '',
-                  spacing: {
-                    after: 30,
-                  },
+                  spacing: { after: 30 },
                 })
               );
             }
           } catch (err) {
             console.error(`Error processing worksheet ${worksheet.name}:`, err);
-            // Continue with next worksheet
           }
         }
 
-        // Only add the file section if it has matches
         if (fileMatches > 0) {
           filesWithMatches++;
           totalMatches += fileMatches;
-
-          // Add file summary
           fileSectionChildren.push(
             new Paragraph({
               text: '―'.repeat(46),
-              spacing: {
-                before: 30,
-                after: 30,
-              },
+              spacing: { before: 30, after: 30 },
               alignment: AlignmentType.CENTER,
             }),
             new Paragraph({
@@ -295,10 +242,7 @@ export default async function handler(req, res) {
                   size: 24,
                 }),
               ],
-              spacing: {
-                before: 30,
-                after: 30,
-              },
+              spacing: { before: 30, after: 30 },
               alignment: AlignmentType.CENTER,
             }),
             new Paragraph({
@@ -309,18 +253,12 @@ export default async function handler(req, res) {
                   size: 24,
                 }),
               ],
-              spacing: {
-                before: 30,
-                after: 30,
-              },
+              spacing: { before: 30, after: 30 },
               alignment: AlignmentType.CENTER,
             })
           );
-
-          // Instead of doc.addSection, push to allChildren
           allChildren.push(...fileSectionChildren);
         }
-
         processedFiles++;
       } catch (err) {
         console.error(`Error processing file ${file.fileName}:`, err);
@@ -328,9 +266,30 @@ export default async function handler(req, res) {
           fileName: file.fileName,
           error: err.message
         });
-        // Continue with next file
       }
     }
+
+    // Concurrency control helper
+    async function processFilesWithConcurrency(files, concurrency) {
+      let index = 0;
+      const results = [];
+      async function worker() {
+        while (index < files.length) {
+          const currentIndex = index++;
+          await processSingleFile(files[currentIndex]);
+        }
+      }
+      const workers = [];
+      for (let i = 0; i < concurrency; i++) {
+        workers.push(worker());
+      }
+      await Promise.all(workers);
+      return results;
+    }
+
+    // Use the concurrency-controlled processor
+    await processFilesWithConcurrency(files, concurrency);
+    // --- END: Parallelize Excel file processing ---
 
     // Add overall summary
     const summarySectionChildren = [
