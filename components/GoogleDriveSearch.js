@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useRouter } from "next/router";
-import { useTheme } from './ThemeContext';
 
 const GoogleDriveSearch = () => {
   const router = useRouter();
-  const { darkMode } = useTheme();
   const fid = typeof router.query.fid !== "undefined" ? router.query.fid : "root";
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -31,6 +29,9 @@ const GoogleDriveSearch = () => {
   const [selectedFileType, setSelectedFileType] = useState("");
   const accessToken = localStorage.getItem("access_token");
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const [processingStatus, setProcessingStatus] = useState('');
+  const [isInitializing, setIsInitializing] = useState(false);
 
   const refreshAccessToken = async () => {
     try {
@@ -386,156 +387,104 @@ const GoogleDriveSearch = () => {
     }
   }
 
-  // Update the extractContentFromFile function to handle shared files
-  const extractContentFromFile = async (fileId, fileName, mimeType) => {
+  // Add this new function for retrying failed requests
+  const retryRequest = async (requestFn, maxRetries = 3, delay = 1000) => {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await requestFn();
+      } catch (error) {
+        lastError = error;
+        if (error.response && error.response.status === 401) {
+          // Token expired, try to refresh
+          const newAccessToken = await refreshAccessToken();
+          if (newAccessToken) {
+            // Update the access token in the request
+            const originalRequest = requestFn.toString();
+            const newRequest = originalRequest.replace(
+              /Bearer\s+[^"]+/,
+              `Bearer ${newAccessToken}`
+            );
+            requestFn = new Function('return ' + newRequest)();
+            continue;
+          }
+        }
+        if (i < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+        }
+      }
+    }
+    throw lastError;
+  };
+
+  // Update the processExcelFile function
+  const processExcelFile = async (fileId, fileName) => {
     try {
-      let content = '';
       const accessToken = localStorage.getItem("access_token");
-
-      // Get metadata for all file types first with supportsAllDrives
-      const metadataResponse = await axios.get(
-        `https://www.googleapis.com/drive/v3/files/${fileId}`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: { 
-            fields: 'name,mimeType,size,modifiedTime,description',
-            supportsAllDrives: true
-          }
-        }
-      );
-      const metadata = metadataResponse.data;
-
-      // For supported document types, download and process through our API
-      const supportedTypes = [
-        'application/msword', // .doc
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-        'application/pdf', // .pdf
-        'text/plain', // .txt
-        'application/vnd.oasis.opendocument.text', // .odt
-        'application/vnd.google-apps.document' // Google Docs
-      ];
-
-      if (supportedTypes.includes(mimeType) || 
-          (mimeType === 'application/vnd.google-apps.document')) {
-        try {
-          // For Google Docs, export as docx with supportsAllDrives
-          let fileData;
-          let actualMimeType = mimeType;
-          
-          if (mimeType === 'application/vnd.google-apps.document') {
-            const response = await axios.get(
-              `https://www.googleapis.com/drive/v3/files/${fileId}/export`,
-              {
-                headers: { Authorization: `Bearer ${accessToken}` },
-                params: { 
-                  mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                  supportsAllDrives: true
-                },
-                responseType: 'arraybuffer'
-              }
-            );
-            fileData = response.data;
-            actualMimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-          } else if (mimeType === 'application/msword') {
-            // For .doc files, download directly with supportsAllDrives
-            const response = await axios.get(
-              `https://www.googleapis.com/drive/v3/files/${fileId}`,
-              {
-                headers: { Authorization: `Bearer ${accessToken}` },
-                params: { 
-                  alt: 'media',
-                  supportsAllDrives: true
-                },
-                responseType: 'arraybuffer'
-              }
-            );
-            fileData = response.data;
-            actualMimeType = 'application/msword';
-          } else {
-            // For other file types, download directly with supportsAllDrives
-            const response = await axios.get(
-              `https://www.googleapis.com/drive/v3/files/${fileId}`,
-              {
-                headers: { Authorization: `Bearer ${accessToken}` },
-                params: { 
-                  alt: 'media',
-                  supportsAllDrives: true
-                },
-                responseType: 'arraybuffer'
-              }
-            );
-            fileData = response.data;
-          }
-          
-          // Convert array buffer to base64
-          let base64Data;
-          if (typeof Buffer !== 'undefined') {
-            // Node.js environment
-            base64Data = Buffer.from(fileData).toString('base64');
-          } else {
-            // Browser environment
-            const bytes = new Uint8Array(fileData);
-            let binary = '';
-            for (let i = 0; i < bytes.byteLength; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            base64Data = window.btoa(binary);
-          }
-          
-          // Send to our extract-text API
-          const extractResponse = await fetch('/api/extract-text', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              fileData: base64Data,
-              mimeType: actualMimeType,
-              fileName: fileName
-            }),
-          });
-          
-          if (!extractResponse.ok) {
-            const errorData = await extractResponse.json();
-            throw new Error(errorData.error || 'Failed to extract text');
-          }
-          
-          const data = await extractResponse.json();
-          content = data.extractedText;
-          
-          // If content is empty or very short for a .doc file, try fallback method
-          if (mimeType === 'application/msword' && (!content || content.length < 50)) {
-            console.log("API extraction returned little content for .doc file, trying fallback...");
-            const fallbackContent = generateFallbackContent(metadata,
-              "Limited text could be extracted from this .doc file. It may be in an older format or contain mostly images.");
-            return { fileName, content: fallbackContent };
-          }
-        } catch (err) {
-          console.error(`Error processing file ${fileName} through API:`, err);
-          
-          // Special fallback for .doc files
-          if (mimeType === 'application/msword') {
-            const fallbackContent = generateFallbackContent(metadata,
-              `This .doc file could not be processed automatically. It may be in an older format or contain complex formatting. Error: ${err.message}`);
-            return { fileName, content: fallbackContent };
-          }
-          
-          content = generateFallbackContent(metadata,
-            `Error extracting text: ${err.message}`);
-        }
-      } else {
-        // For unsupported file types, use the existing fallback
-        content = generateFallbackContent(metadata,
-          `Content extraction is not supported for this file type.`);
+      if (!accessToken) {
+        throw new Error('No access token available');
       }
 
-      return { fileName, content };
-    } catch (err) {
-      console.error(`Error extracting content from ${fileName}:`, err);
+      // Download the Excel file with retry logic
+      const response = await retryRequest(() => 
+        axios.get(
+          `https://www.googleapis.com/drive/v3/files/${fileId}`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            params: { 
+              alt: 'media',
+              supportsAllDrives: true
+            },
+            responseType: 'arraybuffer',
+            timeout: 30000 // 30 second timeout
+          }
+        )
+      );
+
+      if (!response.data || response.data.byteLength === 0) {
+        throw new Error('Received empty file from Google Drive');
+      }
+
+      // Convert to base64
+      let base64Data;
+      try {
+        if (typeof Buffer !== 'undefined') {
+          // Node.js environment
+          base64Data = Buffer.from(response.data).toString('base64');
+        } else {
+          // Browser environment
+          const bytes = new Uint8Array(response.data);
+          let binary = '';
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          base64Data = window.btoa(binary);
+        }
+      } catch (conversionError) {
+        console.error('Error converting file to base64:', conversionError);
+        throw new Error('Failed to process Excel file: Conversion error');
+      }
+
       return {
         fileName,
-        content: `Error extracting content: ${err.message}`
+        fileData: base64Data
       };
+    } catch (error) {
+      console.error('Error processing Excel file:', error);
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+        console.error('Response headers:', error.response.headers);
+      } else if (error.request) {
+        // The request was made but no response was received
+        console.error('No response received:', error.request);
+      } else {
+        // Something happened in setting up the request that triggered an Error
+        console.error('Error message:', error.message);
+      }
+      throw new Error(`Failed to process Excel file: ${error.message}`);
     }
   };
 
@@ -776,72 +725,305 @@ const GoogleDriveSearch = () => {
     }
   };
 
-  // Add this new function to handle Excel file processing
-  const processExcelFile = async (fileId, fileName) => {
-    try {
-      const accessToken = localStorage.getItem("access_token");
-      
-      // Download the Excel file
-      const response = await axios.get(
-        `https://www.googleapis.com/drive/v3/files/${fileId}`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: { alt: 'media' },
-          responseType: 'arraybuffer'
+  // Update the processFilesInBatches function
+  const processFilesInBatches = async (files, batchSize = 5) => {
+    const batches = [];
+    for (let i = 0; i < files.length; i += batchSize) {
+      batches.push(files.slice(i, i + batchSize));
+    }
+
+    const results = [];
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      const batchPromises = batch.map(async file => {
+        try {
+          const result = await extractContentFromFile(file.id, file.name, file.mimeType);
+          // Ensure we have valid content
+          if (!result || !result.content) {
+            console.warn(`No content extracted from ${file.name}`);
+            return {
+              fileName: file.name,
+              extractedText: `No content could be extracted from this file.`
+            };
+          }
+          return {
+            fileName: file.name,
+            extractedText: result.content
+          };
+        } catch (err) {
+          console.error(`Error processing ${file.name}:`, err);
+          return {
+            fileName: file.name,
+            extractedText: `Error processing file: ${err.message}`
+          };
         }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+      
+      // Update progress
+      const progress = Math.round(((i + 1) * batchSize / files.length) * 100);
+      setProcessingProgress(Math.min(progress, 100));
+      setProcessingStatus(`Processing batch ${i + 1} of ${batches.length}`);
+    }
+
+    return results;
+  };
+
+  // Add back the extractContentFromFile function
+  const extractContentFromFile = async (fileId, fileName, mimeType) => {
+    try {
+      let content = '';
+      const accessToken = localStorage.getItem("access_token");
+
+      // Get metadata for all file types first with supportsAllDrives
+      const metadataResponse = await retryRequest(() =>
+        axios.get(
+          `https://www.googleapis.com/drive/v3/files/${fileId}`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            params: { 
+              fields: 'name,mimeType,size,modifiedTime,description',
+              supportsAllDrives: true
+            }
+          }
+        )
       );
+      const metadata = metadataResponse.data;
 
-      // Convert to base64
-      const base64Data = Buffer.from(response.data).toString('base64');
+      // For supported document types, download and process through our API
+      const supportedTypes = [
+        'application/msword', // .doc
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+        'application/pdf', // .pdf
+        'text/plain', // .txt
+        'application/vnd.oasis.opendocument.text', // .odt
+        'application/vnd.google-apps.document' // Google Docs
+      ];
 
+      if (supportedTypes.includes(mimeType) || 
+          (mimeType === 'application/vnd.google-apps.document')) {
+        try {
+          // For Google Docs, export as docx with supportsAllDrives
+          let fileData;
+          let actualMimeType = mimeType;
+          
+          if (mimeType === 'application/vnd.google-apps.document') {
+            const response = await retryRequest(() =>
+              axios.get(
+                `https://www.googleapis.com/drive/v3/files/${fileId}/export`,
+                {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                  params: { 
+                    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    supportsAllDrives: true
+                  },
+                  responseType: 'arraybuffer'
+                }
+              )
+            );
+            fileData = response.data;
+            actualMimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          } else if (mimeType === 'application/msword') {
+            // For .doc files, download directly with supportsAllDrives
+            const response = await retryRequest(() =>
+              axios.get(
+                `https://www.googleapis.com/drive/v3/files/${fileId}`,
+                {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                  params: { 
+                    alt: 'media',
+                    supportsAllDrives: true
+                  },
+                  responseType: 'arraybuffer'
+                }
+              )
+            );
+            fileData = response.data;
+            actualMimeType = 'application/msword';
+          } else {
+            // For other file types, download directly with supportsAllDrives
+            const response = await retryRequest(() =>
+              axios.get(
+                `https://www.googleapis.com/drive/v3/files/${fileId}`,
+                {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                  params: { 
+                    alt: 'media',
+                    supportsAllDrives: true
+                  },
+                  responseType: 'arraybuffer'
+                }
+              )
+            );
+            fileData = response.data;
+          }
+          
+          // Convert array buffer to base64
+          let base64Data;
+          if (typeof Buffer !== 'undefined') {
+            // Node.js environment
+            base64Data = Buffer.from(fileData).toString('base64');
+          } else {
+            // Browser environment
+            const bytes = new Uint8Array(fileData);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+            base64Data = window.btoa(binary);
+          }
+          
+          // Send to our extract-text API
+          const extractResponse = await fetch('/api/extract-text', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              fileData: base64Data,
+              mimeType: actualMimeType,
+              fileName: fileName
+            }),
+          });
+          
+          if (!extractResponse.ok) {
+            const errorData = await extractResponse.json();
+            throw new Error(errorData.error || 'Failed to extract text');
+          }
+          
+          const data = await extractResponse.json();
+          content = data.extractedText;
+          
+          // If content is empty or very short for a .doc file, try fallback method
+          if (mimeType === 'application/msword' && (!content || content.length < 50)) {
+            console.log("API extraction returned little content for .doc file, trying fallback...");
+            const fallbackContent = generateFallbackContent(metadata,
+              "Limited text could be extracted from this .doc file. It may be in an older format or contain mostly images.");
+            return { fileName, content: fallbackContent };
+          }
+        } catch (err) {
+          console.error(`Error processing file ${fileName} through API:`, err);
+          
+          // Special fallback for .doc files
+          if (mimeType === 'application/msword') {
+            const fallbackContent = generateFallbackContent(metadata,
+              `This .doc file could not be processed automatically. It may be in an older format or contain complex formatting. Error: ${err.message}`);
+            return { fileName, content: fallbackContent };
+          }
+          
+          content = generateFallbackContent(metadata,
+            `Error extracting text: ${err.message}`);
+        }
+      } else {
+        // For unsupported file types, use the existing fallback
+        content = generateFallbackContent(metadata,
+          `Content extraction is not supported for this file type.`);
+      }
+
+      return { fileName, content };
+    } catch (err) {
+      console.error(`Error extracting content from ${fileName}:`, err);
       return {
         fileName,
-        fileData: base64Data
+        content: `Error extracting content: ${err.message}`
       };
-    } catch (error) {
-      console.error('Error processing Excel file:', error);
-      throw error;
     }
   };
 
-  // Update the processAndCreateDoc function to handle Excel files
+  // Update the processAndCreateDoc function
   const processAndCreateDoc = async () => {
     if (results.length === 0 || !accessToken) return;
 
     setIsProcessing(true);
+    setIsInitializing(true);
     setError(null);
+    setProcessingProgress(0);
+    setProcessingStatus('Initializing...');
 
     try {
       // Initialize arrays for different file types
       const excelFiles = [];
       const extractedFiles = [];
 
-      // Process each file based on its type
-      for (const file of results) {
-        try {
-          if (file.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-              file.mimeType === 'application/vnd.ms-excel') {
-            const excelData = await processExcelFile(file.id, file.name);
-            excelFiles.push(excelData);
-          } else {
-            // Existing Word document processing logic
-            const { fileName, content } = await extractContentFromFile(file.id, file.name, file.mimeType);
-            
-            // Add to extracted files array
-            extractedFiles.push({
-              fileName,
-              extractedText: content
-            });
+      // Separate files by type first
+      const excelFileList = results.filter(file => 
+        file.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        file.mimeType === 'application/vnd.ms-excel'
+      );
+      const docResults = results.filter(file => 
+        !excelFileList.some(excel => excel.id === file.id)
+      );
+
+      setIsInitializing(false);
+      setProcessingStatus('Processing files...');
+
+      // Process Excel files if any
+      if (excelFileList.length > 0) {
+        setProcessingStatus('Processing Excel files...');
+        const excelPromises = excelFileList.map(async (file) => {
+          try {
+            return await processExcelFile(file.id, file.name);
+          } catch (err) {
+            console.error(`Error processing Excel file ${file.name}:`, err);
+            return null;
           }
-        } catch (err) {
-          console.error(`Error processing ${file.name}:`, err);
-          // Continue with other files even if one fails
+        });
+        
+        const processedExcelFiles = await Promise.all(excelPromises);
+        const validExcelFiles = processedExcelFiles.filter(Boolean);
+        
+        if (validExcelFiles.length === 0) {
+          throw new Error('Failed to process any Excel files');
+        }
+        
+        excelFiles.push(...validExcelFiles);
+      }
+
+      // Process document files in parallel batches
+      if (docResults.length > 0) {
+        setProcessingStatus('Processing documents...');
+        try {
+          const processedDocs = await processFilesInBatches(docResults);
+          
+          // Validate and clean the processed documents
+          const validDocs = processedDocs
+            .filter(doc => doc && doc.fileName && doc.extractedText)
+            .map(doc => ({
+              fileName: doc.fileName,
+              extractedText: doc.extractedText.trim() || 'No content available'
+            }));
+
+          if (validDocs.length === 0) {
+            console.warn('No valid documents found, checking for any processed content...');
+            // Try to use any processed content, even if empty
+            const fallbackDocs = processedDocs
+              .filter(doc => doc && doc.fileName)
+              .map(doc => ({
+                fileName: doc.fileName,
+                extractedText: doc.extractedText || 'No content available'
+              }));
+
+            if (fallbackDocs.length > 0) {
+              console.log('Using fallback documents:', fallbackDocs.length);
+              extractedFiles.push(...fallbackDocs);
+            } else {
+              throw new Error('No documents could be processed. Please check file permissions and try again.');
+            }
+          } else {
+            console.log('Valid documents found:', validDocs.length);
+            extractedFiles.push(...validDocs);
+          }
+        } catch (error) {
+          console.error('Error processing documents:', error);
+          throw new Error(`Error processing documents: ${error.message}`);
         }
       }
 
-      // If we have Excel files to process
+      // Process Excel files if we have any
       if (excelFiles.length > 0) {
-        // Send all Excel files to the process-excel API
+        setProcessingStatus('Creating Excel document...');
         const processResponse = await fetch('/api/process-excel', {
           method: 'POST',
           headers: {
@@ -857,83 +1039,109 @@ const GoogleDriveSearch = () => {
           throw new Error('Failed to process Excel files');
         }
 
-        // Get the blob from the response
         const blob = await processResponse.blob();
-        
-        // Create a download link
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        
-        // Get filename from Content-Disposition header
         const contentDisposition = processResponse.headers.get('Content-Disposition');
         const filename = contentDisposition
           ? contentDisposition.split('filename=')[1]
           : 'excel_results.docx';
-        
-        link.setAttribute('download', filename);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
 
-        // Store the last downloaded file info
-        setLastDownloadedFile({
-          filename,
-          blob
-        });
-      }
-
-      // If we have Word documents to process
-      if (extractedFiles.length > 0) {
-        // Send the extracted content to the combine-files API
-        const response = await fetch('/api/combine-files', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ 
-            files: extractedFiles,
-            query: query
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to combine files');
-        }
-
-        // Get the blob from the response
-        const blob = await response.blob();
-        
-        // Create a download link
+        // Create and trigger download
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        
-        // Get filename from Content-Disposition header
-        const contentDisposition = response.headers.get('Content-Disposition');
-        const filename = contentDisposition
-          ? contentDisposition.split('filename=')[1]
-          : 'combined_document.docx';
-        
         link.setAttribute('download', filename);
         document.body.appendChild(link);
         link.click();
         link.remove();
         window.URL.revokeObjectURL(url);
 
-        // Store the last downloaded file info
         setLastDownloadedFile({
           filename,
           blob
         });
       }
+
+      // Process Word documents if we have any
+      if (extractedFiles.length > 0) {
+        setProcessingStatus('Creating Word document...');
+        try {
+          // Validate files before sending to API
+          const validFiles = extractedFiles.map(file => ({
+            fileName: file.fileName || 'Untitled Document',
+            extractedText: file.extractedText || 'No content available'
+          }));
+
+          console.log('Sending files to combine:', validFiles.length);
+
+          const response = await fetch('/api/combine-files', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+              files: validFiles,
+              query: query
+            }),
+          });
+
+          if (!response.ok) {
+            let errorMessage = 'Failed to combine files';
+            try {
+              const errorData = await response.json();
+              errorMessage = errorData.error || errorMessage;
+            } catch (parseError) {
+              console.error('Error parsing error response:', parseError);
+            }
+            throw new Error(errorMessage);
+          }
+
+          const blob = await response.blob();
+          if (!blob || blob.size === 0) {
+            throw new Error('Received empty file from server');
+          }
+
+          let filename = 'combined_document.docx';
+          try {
+            const contentDisposition = response.headers.get('Content-Disposition');
+            if (contentDisposition) {
+              const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+              if (filenameMatch && filenameMatch[1]) {
+                filename = filenameMatch[1].replace(/['"]/g, '');
+              }
+            }
+          } catch (headerError) {
+            console.error('Error parsing Content-Disposition header:', headerError);
+          }
+
+          // Create and trigger download
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.setAttribute('download', filename);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.URL.revokeObjectURL(url);
+
+          setLastDownloadedFile({
+            filename,
+            blob
+          });
+        } catch (combineError) {
+          console.error('Error in document combination process:', combineError);
+          throw new Error(`Error combining files: ${combineError.message}`);
+        }
+      }
+
+      setProcessingProgress(100);
+      setProcessingStatus('Complete!');
     } catch (err) {
       console.error("Error creating document:", err);
       setError(err);
+      setProcessingStatus('Error occurred');
     } finally {
       setIsProcessing(false);
+      setIsInitializing(false);
     }
   };
 
@@ -1078,7 +1286,7 @@ const GoogleDriveSearch = () => {
   };
 
   return (
-    <div className={`w-full text-left p-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+    <div className="w-full text-left p-4 text-gray-800">
       {/* Search Input */}
       <div className="flex gap-2">
         <div className="relative flex-1">
@@ -1090,12 +1298,11 @@ const GoogleDriveSearch = () => {
               setSearchError(null);
             }}
             onKeyPress={handleKeyPress}
-            className={`w-full p-3 pl-10 border ${searchError ? 'border-red-500' : darkMode ? 'border-gray-600 bg-gray-700 text-white' : 'border-gray-300 bg-white text-gray-900'
-              } rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
+            className={`w-full p-3 pl-10 border ${searchError ? 'border-red-500' : 'border-gray-300 bg-white text-gray-900'} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
             placeholder="Search files based on content..."
           />
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <svg className={`h-5 w-5 ${darkMode ? 'text-gray-400' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </div>
@@ -1105,7 +1312,7 @@ const GoogleDriveSearch = () => {
         <button
           onClick={searchFiles}
           disabled={loading || !accessToken}
-          className={`px-6 py-3 ${darkMode ? 'bg-blue-700 hover:bg-blue-800' : 'bg-blue-600 hover:bg-blue-700'} text-white rounded-lg transition duration-300 disabled:bg-blue-300 flex items-center space-x-2`}
+          className={`px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition duration-300 disabled:bg-blue-300 flex items-center space-x-2`}
         >
           {loading ? (
             <>
@@ -1128,7 +1335,7 @@ const GoogleDriveSearch = () => {
         {/* Clear Button */}
         <button
           onClick={clearSearch}
-          className={`px-6 py-3 ${darkMode ? 'bg-gray-700 text-gray-200 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'} rounded-lg transition duration-300 flex items-center space-x-2`}
+          className={`px-6 py-3 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg transition duration-300 flex items-center space-x-2`}
         >
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
@@ -1141,7 +1348,7 @@ const GoogleDriveSearch = () => {
       <div className="mt-4">
         <button
           onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-          className={`flex items-center space-x-2 ${darkMode ? 'text-gray-300 hover:text-white' : 'text-gray-600 hover:text-gray-900'}`}
+          className={`flex items-center space-x-2 text-gray-600 hover:text-gray-900`}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
@@ -1155,15 +1362,14 @@ const GoogleDriveSearch = () => {
         <div className="flex gap-4 mt-4">
           {/* Folders Dropdown */}
           <div className="flex-1">
-            <label htmlFor="folder-select" className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>
+            <label htmlFor="folder-select" className="block text-sm font-medium text-gray-700 mb-1">
               Folder
             </label>
             <select
               id="folder-select"
               value={selectedFolder}
               onChange={(e) => setSelectedFolder(e.target.value)}
-              className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'
-                }`}
+              className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
             >
               {folders.map((folder) => (
                 <option key={folder.id} value={folder.id}>
@@ -1175,15 +1381,14 @@ const GoogleDriveSearch = () => {
 
           {/* File Types Dropdown */}
           <div className="flex-1">
-            <label htmlFor="file-type-select" className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>
+            <label htmlFor="file-type-select" className="block text-sm font-medium text-gray-700 mb-1">
               File Type
             </label>
             <select
               id="file-type-select"
               value={selectedFileType}
               onChange={(e) => setSelectedFileType(e.target.value)}
-              className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'
-                }`}
+              className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
             >
               {fileTypes.map((type) => (
                 <option key={type.value} value={type.value}>
@@ -1198,8 +1403,8 @@ const GoogleDriveSearch = () => {
       {/* Search Error Message */}
       {searchError && (
         <div className={`p-4 mb-4 mt-4 rounded-lg flex items-center space-x-2 ${searchError.startsWith("No results found")
-          ? darkMode ? 'bg-blue-900 text-blue-200' : 'bg-blue-50 text-blue-600'
-          : darkMode ? 'bg-red-900 text-red-200' : 'bg-red-50 text-red-600'
+          ? 'bg-blue-50 text-blue-600'
+          : 'bg-red-50 text-red-600'
           }`}>
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             {searchError.startsWith("No results found") ? (
@@ -1226,7 +1431,17 @@ const GoogleDriveSearch = () => {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <span>Processing...</span>
+                <div className="flex flex-col">
+                  <span>{processingStatus}</span>
+                  {processingProgress > 0 && (
+                    <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                        style={{ width: `${processingProgress}%` }}
+                      ></div>
+                    </div>
+                  )}
+                </div>
               </>
             ) : (
               <>
@@ -1273,10 +1488,10 @@ const GoogleDriveSearch = () => {
       {/* Search Results */}
       {results.length > 0 && (
         <div className="mt-4">
-          <h3 className={`text-lg font-semibold mb-2 ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>Search Results ({results.length})</h3>
+          <h3 className="text-lg font-semibold mb-2 text-gray-700">Search Results ({results.length})</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {results.map((result) => (
-              <div key={result.id} className={`${darkMode ? 'bg-gray-800 border-gray-700 hover:border-blue-800' : 'bg-white border-gray-100 hover:border-blue-200'} rounded-lg shadow-sm hover:shadow-md transition-all duration-300 border p-4`}>
+              <div key={result.id} className="bg-white border-gray-100 hover:border-blue-200 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 border p-4">
                 <div className="flex items-center space-x-3">
                   <div className="flex-shrink-0">
                     <svg className="h-8 w-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1292,7 +1507,7 @@ const GoogleDriveSearch = () => {
                     >
                       {result.name}
                     </a>
-                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} truncate`}>{result.mimeType}</p>
+                    <p className="text-sm text-gray-500 truncate">{result.mimeType}</p>
                   </div>
                   <button
                     onClick={() => downloadFile(result.id, result.name, result.mimeType)}

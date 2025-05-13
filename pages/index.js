@@ -6,11 +6,8 @@ import SimpleSignOn from "../components/SimpleSignOn";
 import PlayBookFolders from "../components/PlayBookFolders";
 import PlayBookFiles from "../components/PlayBookFiles";
 import Layout from "../components/Layout";
-import { useTheme } from "../components/ThemeContext";
 
 export default function Home() {
-  const { darkMode } = useTheme();
-  
   return (
     <SimpleSignOn>
       <Layout>
@@ -27,14 +24,14 @@ export default function Home() {
                   <GoogleDriveSearch />
                 </div>
                 <div className="mt-8">
-                  <h2 className={`text-lg font-bold ${darkMode ? 'text-gray-200' : 'text-gray-800'} mb-4`}>Folders</h2>
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-sm p-4`}>
+                  <h2 className="text-lg font-bold text-gray-800 mb-4">Folders</h2>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
                     <PlayBookFolders />
                   </div>
                 </div>
                 <div className="mt-8">
-                  <h2 className={`text-lg font-bold ${darkMode ? 'text-gray-200' : 'text-gray-800'} mb-4`}>Files</h2>
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-sm p-4`}>
+                  <h2 className="text-lg font-bold text-gray-800 mb-4">Files</h2>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
                     <PlayBookFiles />
                   </div>
                 </div>
