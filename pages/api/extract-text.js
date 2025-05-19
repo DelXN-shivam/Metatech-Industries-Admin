@@ -109,23 +109,25 @@ export default async function handler(req, res) {
               .trim()
             ).filter(line => line.length > 0);
             
-          // Find the line with 'Reference' or limit to 23 lines
-          let endIndex = -1;
-          for (let i = 0; i < lines.length; i++) {
-            const cleanLine = lines[i].toUpperCase();
-            if (cleanLine.includes('REFERENCE')) {
-              endIndex = i;
-              break;
-            }
-          }
-          
-          if (endIndex >= 0) {
-            lines = lines.slice(0, endIndex + 1);
-          } else {
-            lines = lines.slice(0, 23);
-          }
-          
-          return res.status(200).json({ extractedText: lines.join('\n') });
+            // Get start and end line numbers from request
+            const startLine = parseInt(fields.startLine) || 0;
+            const endLine = parseInt(fields.endLine) || 20; // Default to 20 lines if not specified
+            
+            // Validate line numbers
+            const validStartLine = Math.max(0, startLine);
+            const validEndLine = Math.min(lines.length, Math.max(validStartLine + 1, endLine));
+            
+            // Extract the specified range of lines
+            lines = lines.slice(validStartLine, validEndLine);
+            
+            return res.status(200).json({ 
+              extractedText: lines.join('\n'),
+              lineRange: {
+                start: validStartLine,
+                end: validEndLine,
+                totalLines: lines.length
+              }
+            });
         } catch (error) {
           console.error('Error processing file:', error);
           return res.status(500).json({ error: 'Error processing file' });
@@ -153,6 +155,10 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Missing required fields' });
           }
 
+          // Get start and end line numbers from request
+          const startLine = parseInt(parsed.startLine) || 0;
+          const endLine = parseInt(parsed.endLine) || 20; // Default to 20 lines if not specified
+
           // --- Process all files in parallel, order does not matter ---
           const results = await Promise.all(
             files.map(async (file, idx) => {
@@ -173,22 +179,22 @@ export default async function handler(req, res) {
                     .replace(/\s+/g, ' ')
                     .trim()
                 ).filter(line => line.length > 0);
-                let endIndex = -1;
-                for (let i = 0; i < lines.length; i++) {
-                  const cleanLine = lines[i].toUpperCase();
-                  if (cleanLine.includes('REFERENCE')) {
-                    endIndex = i;
-                    break;
-                  }
-                }
-                if (endIndex >= 0) {
-                  lines = lines.slice(0, endIndex + 1);
-                } else {
-                  lines = lines.slice(0, 23);
-                }
+
+                // Validate line numbers
+                const validStartLine = Math.max(0, startLine);
+                const validEndLine = Math.min(lines.length, Math.max(validStartLine + 1, endLine));
+                
+                // Extract the specified range of lines
+                lines = lines.slice(validStartLine, validEndLine);
+
                 return {
                   fileName: fileName || `file_${idx + 1}`,
-                  extractedText: lines.join('\n')
+                  extractedText: lines.join('\n'),
+                  lineRange: {
+                    start: validStartLine,
+                    end: validEndLine,
+                    totalLines: lines.length
+                  }
                 };
               } catch (error) {
                 return {

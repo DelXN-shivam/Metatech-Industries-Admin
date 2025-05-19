@@ -32,6 +32,9 @@ const GoogleDriveSearch = () => {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [processingStatus, setProcessingStatus] = useState('');
   const [isInitializing, setIsInitializing] = useState(false);
+  const [startLine, setStartLine] = useState(0);
+  const [endLine, setEndLine] = useState(20);
+  const [lineRangeError, setLineRangeError] = useState(null);
 
   const refreshAccessToken = async () => {
     try {
@@ -771,7 +774,7 @@ const GoogleDriveSearch = () => {
     return results;
   };
 
-  // Add back the extractContentFromFile function
+  // Update the extractContentFromFile function
   const extractContentFromFile = async (fileId, fileName, mimeType) => {
     try {
       let content = '';
@@ -825,25 +828,7 @@ const GoogleDriveSearch = () => {
             );
             fileData = response.data;
             actualMimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-          } else if (mimeType === 'application/msword') {
-            // For .doc files, download directly with supportsAllDrives
-            const response = await retryRequest(() =>
-              axios.get(
-                `https://www.googleapis.com/drive/v3/files/${fileId}`,
-                {
-                  headers: { Authorization: `Bearer ${accessToken}` },
-                  params: { 
-                    alt: 'media',
-                    supportsAllDrives: true
-                  },
-                  responseType: 'arraybuffer'
-                }
-              )
-            );
-            fileData = response.data;
-            actualMimeType = 'application/msword';
           } else {
-            // For other file types, download directly with supportsAllDrives
             const response = await retryRequest(() =>
               axios.get(
                 `https://www.googleapis.com/drive/v3/files/${fileId}`,
@@ -860,20 +845,8 @@ const GoogleDriveSearch = () => {
             fileData = response.data;
           }
           
-          // Convert array buffer to base64
-          let base64Data;
-          if (typeof Buffer !== 'undefined') {
-            // Node.js environment
-            base64Data = Buffer.from(fileData).toString('base64');
-          } else {
-            // Browser environment
-            const bytes = new Uint8Array(fileData);
-            let binary = '';
-            for (let i = 0; i < bytes.byteLength; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            base64Data = window.btoa(binary);
-          }
+          // Convert to base64
+          const base64Data = Buffer.from(fileData).toString('base64');
           
           // Send to our extract-text API
           const extractResponse = await fetch('/api/extract-text', {
@@ -884,7 +857,9 @@ const GoogleDriveSearch = () => {
             body: JSON.stringify({
               fileData: base64Data,
               mimeType: actualMimeType,
-              fileName: fileName
+              fileName: fileName,
+              startLine: startLine,
+              endLine: endLine
             }),
           });
           
@@ -1285,6 +1260,44 @@ const GoogleDriveSearch = () => {
     }
   };
 
+  // Add validation function for line range
+  const validateLineRange = (start, end) => {
+    const lineCount = end - start;
+    if (lineCount > 20) {
+      setLineRangeError(`Line range cannot exceed 20 lines. Current range: ${lineCount} lines`);
+      return false;
+    }
+    setLineRangeError(null);
+    return true;
+  };
+
+  // Add handlers for line range inputs
+  const handleStartLineChange = (e) => {
+    const value = e.target.value === '' ? 0 : parseInt(e.target.value);
+    if (isNaN(value)) return;
+    
+    setStartLine(value);
+    // If end line is less than or equal to new start line, adjust it
+    if (endLine <= value) {
+      setEndLine(value + 1);
+    }
+    validateLineRange(value, endLine);
+  };
+
+  const handleEndLineChange = (e) => {
+    const value = e.target.value === '' ? startLine + 1 : parseInt(e.target.value);
+    if (isNaN(value)) return;
+    
+    // Only set the end line if it's greater than start line
+    if (value > startLine) {
+      setEndLine(value);
+      validateLineRange(startLine, value);
+    } else {
+      // If value is less than or equal to start line, show error
+      setLineRangeError(`End line must be greater than start line (${startLine})`);
+    }
+  };
+
   return (
     <div className="w-full text-left p-4 text-gray-800">
       {/* Search Input */}
@@ -1357,45 +1370,79 @@ const GoogleDriveSearch = () => {
         </button>
       </div>
 
-      {/* Filter Dropdowns */}
+      {/* Filter Dropdowns and Line Range Inputs */}
       {showAdvancedOptions && (
-        <div className="flex gap-4 mt-4">
-          {/* Folders Dropdown */}
-          <div className="flex-1">
-            <label htmlFor="folder-select" className="block text-sm font-medium text-gray-700 mb-1">
-              Folder
-            </label>
-            <select
-              id="folder-select"
-              value={selectedFolder}
-              onChange={(e) => setSelectedFolder(e.target.value)}
-              className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
-            >
-              {folders.map((folder) => (
-                <option key={folder.id} value={folder.id}>
-                  {folder.name}
-                </option>
-              ))}
-            </select>
+        <div className="mt-4 space-y-4">
+          <div className="flex gap-4">
+            {/* Folders Dropdown */}
+            <div className="flex-1">
+              <label htmlFor="folder-select" className="block text-sm font-medium text-gray-700 mb-1">
+                Folder
+              </label>
+              <select
+                id="folder-select"
+                value={selectedFolder}
+                onChange={(e) => setSelectedFolder(e.target.value)}
+                className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
+              >
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* File Types Dropdown */}
+            <div className="flex-1">
+              <label htmlFor="file-type-select" className="block text-sm font-medium text-gray-700 mb-1">
+                File Type
+              </label>
+              <select
+                id="file-type-select"
+                value={selectedFileType}
+                onChange={(e) => setSelectedFileType(e.target.value)}
+                className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
+              >
+                {fileTypes.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          {/* File Types Dropdown */}
-          <div className="flex-1">
-            <label htmlFor="file-type-select" className="block text-sm font-medium text-gray-700 mb-1">
-              File Type
-            </label>
-            <select
-              id="file-type-select"
-              value={selectedFileType}
-              onChange={(e) => setSelectedFileType(e.target.value)}
-              className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
-            >
-              {fileTypes.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
+          {/* Line Range Inputs */}
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label htmlFor="start-line" className="block text-sm font-medium text-gray-700 mb-1">
+                Start Line
+              </label>
+              <input
+                type="number"
+                id="start-line"
+                value={startLine}
+                onChange={handleStartLineChange}
+                min="0"
+                className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900"
+                placeholder="Start line number"
+              />
+            </div>
+            <div className="flex-1">
+              <label htmlFor="end-line" className="block text-sm font-medium text-gray-700 mb-1">
+                End Line (Maximum 20 Lines)
+              </label>
+              <input
+                type="number"
+                id="end-line"
+                value={endLine}
+                onChange={handleEndLineChange}
+                min={startLine + 1}
+                className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900"
+                placeholder={`Enter line number > ${startLine}`}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -1422,8 +1469,12 @@ const GoogleDriveSearch = () => {
         {results.length > 0 && (
           <button
             onClick={processAndCreateDoc}
-            disabled={isProcessing || !accessToken}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition duration-300 disabled:bg-green-300 flex items-center space-x-2"
+            disabled={isProcessing || !accessToken || lineRangeError !== null}
+            className={`px-6 py-3 ${
+              lineRangeError 
+                ? 'bg-gray-400 cursor-not-allowed' 
+                : 'bg-green-600 hover:bg-green-700'
+            } text-white rounded-lg transition duration-300 flex items-center space-x-2`}
           >
             {isProcessing ? (
               <>
@@ -1522,6 +1573,16 @@ const GoogleDriveSearch = () => {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Line Range Error Message */}
+      {lineRangeError && (
+        <div className="mt-2 p-3 bg-red-50 text-red-600 rounded-lg flex items-center space-x-2">
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>{lineRangeError}</span>
         </div>
       )}
     </div>
