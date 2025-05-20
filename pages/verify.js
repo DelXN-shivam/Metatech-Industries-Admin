@@ -17,8 +17,8 @@ export default function LoginPage() {
   const allowedEmails = [
     'admin@metatech.com',
     'mktg@metatechind.com',
-    'testomtest1@gmail.com',
-    'Testomtest1@gmail.com'
+    'testoktest1@gmail.com',
+    'Testoktest1@gmail.com'
   ];
 
   useEffect(() => {
