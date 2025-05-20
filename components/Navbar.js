@@ -28,25 +28,33 @@ const Navbar = () => {
     };
   }, []);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     // Clear all authentication tokens and user details
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('code');
     localStorage.removeItem('userDetails');
+    localStorage.removeItem('userEmail');
+    localStorage.removeItem('isVerified');
+    localStorage.removeItem('sessionExpiry');
     
+
     // Close the profile dropdown
     setIsProfileOpen(false);
-    
-    // Redirect to root path where SimpleSignOn is rendered
-    window.location.href = '/';
+
+    // Give the browser a short moment to complete the localStorage updates
+    setTimeout(() => {
+      // Redirect to root path where SimpleSignOn is rendered
+      window.location.href = '/verify';
+    }, 1000); // Delay of 100ms
   };
+
 
   return (
     <nav className="bg-[#0057B8]">
       <div className="max-w-7xl mx-auto px-4 py-1 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-        <div className="flex items-center">
+          <div className="flex items-center">
             <span className="text-2xl font-bold text-white">Report Generation Dashboard</span>
           </div>
 
