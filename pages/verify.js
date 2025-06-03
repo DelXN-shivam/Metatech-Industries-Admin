@@ -6,10 +6,8 @@ import Image from 'next/image';
 import { AtSign } from 'lucide-react';
 import { useRouter } from 'next/router';
 
-export default function LoginPage() {
+export default function VerifyPage() {
   const [email, setEmail] = useState('');
-  // const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
 
@@ -22,23 +20,12 @@ export default function LoginPage() {
   useEffect(() => {
     document.title = "Login | Metatech Industries";
     
-    // Check if there's an active session
-    const sessionExpiry = localStorage.getItem('sessionExpiry');
+    // Check if already verified
     const isVerified = localStorage.getItem('isVerified');
-    
-    if (isVerified && sessionExpiry) {
-      const now = new Date().getTime();
-      if (now < parseInt(sessionExpiry)) {
-        // Session is still valid, redirect to home
-        router.push('/');
-      } else {
-        // Session expired, clear all session data
-        localStorage.removeItem('sessionExpiry');
-        localStorage.removeItem('isVerified');
-        localStorage.removeItem('userEmail');
-      }
+    if (isVerified === 'true') {
+      router.push('/');
     }
-  }, []);
+  }, [router]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -50,15 +37,11 @@ export default function LoginPage() {
       return;
     }
 
-    // Store the validated email in localStorage
-    localStorage.setItem('userEmail', email);
+    // Store verification status and email
     localStorage.setItem('isVerified', 'true');
+    localStorage.setItem('userEmail', email);
 
-    // Set session expiry (24 hours from now)
-    const expiryTime = new Date().getTime() + (24 * 60 * 60 * 1000);
-    localStorage.setItem('sessionExpiry', expiryTime.toString());
-
-    // If email is valid, redirect to home page
+    // Redirect to home page
     router.push('/');
   };
 
@@ -113,48 +96,6 @@ export default function LoginPage() {
                   {error}
                 </div>
               )}
-
-              {/* Password Input */}
-              {/* <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Password"
-                  className="pl-10 block w-full px-3 py-3 border text-gray-600 border-gray-300 rounded-lg shadow-sm 
-                             focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 
-                             transition duration-300 ease-in-out hover:border-blue-400"/>
-              </div> */}
-
-              {/* Remember Me and Forgot Password */}
-              {/* <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <input
-                    id="remember-me"
-                    name="remember-me"
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                    className="h-4 w-4 text-blue-400 focus:ring-blue-400 border-gray-300 rounded" />
-
-                  <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-900">
-                    Remember me
-                  </label>
-                </div>
-
-                <div className="text-sm">
-                  <Link href="/forgot-password" className="font-medium text-blue-400 hover:text-blue-800">
-                    Forgot password?
-                  </Link>
-                </div>
-              </div> */}
 
               {/* Sign In Button */}
               <div>

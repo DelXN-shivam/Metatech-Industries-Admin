@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useTheme } from './ThemeContext';
 
 const Sidebar = () => {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(true);
-  const { darkMode, toggleTheme } = useTheme();
 
   // Check if current route is under /list/ (for nested folders)
   const isGoogleDriveActive = router.pathname.startsWith('/list/');
@@ -34,22 +32,6 @@ const Sidebar = () => {
       path: '/list/root',
       isActive: isGoogleDriveActive
     },
-    // {
-    //   title: darkMode ? 'Light Mode' : 'Dark Mode',
-    //   icon: (
-    //     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    //       <path
-    //         strokeLinecap="round"
-    //         strokeLinejoin="round"
-    //         strokeWidth="2"
-    //         d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
-    //       />
-    //     </svg>
-    //   ),
-    //   path: '',
-    //   isActive: false,
-    //   onClick: toggleTheme
-    // }
   ];
 
   const handleNavigation = (item) => {
@@ -61,16 +43,16 @@ const Sidebar = () => {
   };
 
   return (
-    <div className={`${darkMode ? 'bg-gray-800' : 'bg-gradient-to-r from-[#0057B8] to-[#0057B8]'} ${isOpen ? 'w-64' : 'w-20'} min-h-screen transition-all duration-300 ease-in-out`}>
+    <div className={`${isOpen ? 'w-64' : 'w-20'} min-h-screen transition-all duration-300 ease-in-out bg-[#0057B8]`}>
       <div className="flex items-center justify-between p-4 border-b border-gray-200">
         <h1 className={`text-xl font-bold text-white`}>
           {isOpen ? 'Metatech' : ''}
         </h1>
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-100' : 'hover:bg-gray-100 hover:text-blue-700'}`}
+          className={`p-2 rounded-lg text-gray-100 hover:text-gray-400`}
         >
-          <svg className={`w-6 h-6 ${darkMode ? 'text-white hover:text-black' : 'text-gray-100 hover:text-blue-700'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className={`w-6 h-6`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
@@ -82,12 +64,8 @@ const Sidebar = () => {
             key={item.title}
             onClick={() => handleNavigation(item)}
             className={`flex items-center px-4 py-3 cursor-pointer transition-colors duration-200 ${item.isActive
-                ? darkMode
-                  ? 'bg-blue-900 text-white'
-                  : 'bg-blue-100 text-blue-700'
-                : darkMode
-                  ? 'text-gray-300 hover:bg-gray-700'
-                  : 'text-gray-100 hover:bg-gray-100 hover:text-blue-700'
+                ? 'bg-blue-100 text-blue-700'
+                : 'text-white'
               }`}
           >
             <div className="flex-shrink-0">{item.icon}</div>

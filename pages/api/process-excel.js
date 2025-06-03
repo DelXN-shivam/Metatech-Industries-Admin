@@ -89,14 +89,16 @@ export default async function handler(req, res) {
             const columnNames = [];
             for (let i = 1; i <= 4; i++) {
               const cellValue = firstRow.getCell(i).value;
-              columnNames.push(cellValue ? cellValue.toString().trim() : `Column ${i}`);
+              // Use specific column names instead of generic ones
+              const defaultNames = ['Code', 'Date', 'Name of Company', 'Enquiry Details / Product'];
+              columnNames.push(cellValue ? cellValue.toString().trim() : defaultNames[i - 1]);
             }
             rows.push(new TableRow({
               children: [
                 new TableCell({
                   children: [new Paragraph({
                     children: [new TextRun({
-                      text: 'Row #',
+                      text: 'Sr. No.',
                       bold: true,
                       size: 24,
                     })],
@@ -127,8 +129,10 @@ export default async function handler(req, res) {
               for (let rowNumber = startRow; rowNumber <= endRow; rowNumber++) {
                 try {
                   const row = worksheet.getRow(rowNumber);
+                  const thirdColumnValue = row.getCell(3).value;
                   const fourthColumnValue = row.getCell(4).value;
-                  if (fourthColumnValue && fourthColumnValue.toString().toLowerCase().includes(query.toLowerCase())) {
+                  if ((thirdColumnValue && thirdColumnValue.toString().toLowerCase().includes(query.toLowerCase())) ||
+                      (fourthColumnValue && fourthColumnValue.toString().toLowerCase().includes(query.toLowerCase()))) {
                     fileMatches++;
                     hasMatches = true;
                     const firstFourColumns = [];

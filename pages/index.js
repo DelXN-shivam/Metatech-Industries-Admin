@@ -1,16 +1,41 @@
 import Head from "next/head";
 import React, { useEffect, useState } from "react";
+import { useRouter } from "next/router";
 import HeaderImage from "../components/HeaderImage";
 import GoogleDriveSearch from "../components/GoogleDriveSearch";
 import SimpleSignOn from "../components/SimpleSignOn";
 import PlayBookFolders from "../components/PlayBookFolders";
 import PlayBookFiles from "../components/PlayBookFiles";
 import Layout from "../components/Layout";
-import { useTheme } from "../components/ThemeContext";
 
 export default function Home() {
-  const { darkMode } = useTheme();
-  
+  const [localStorageContent, setLocalStorageContent] = useState({});
+  const [userEmail, setUserEmail] = useState('');
+  const router = useRouter();
+
+  useEffect(() => {
+    // Check for verification
+    const isVerified = localStorage.getItem('isVerified');
+    
+    if (!isVerified || isVerified !== 'true') {
+      router.push('/verify');
+      return;
+    }
+
+    // Get all localStorage content
+    const getAllLocalStorage = () => {
+      const content = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        content[key] = localStorage.getItem(key);
+      }
+      setLocalStorageContent(content);
+      setUserEmail(localStorage.getItem('userEmail') || '');
+    };
+
+    getAllLocalStorage();
+  }, [router]);
+
   return (
     <SimpleSignOn>
       <Layout>
@@ -24,17 +49,28 @@ export default function Home() {
               <div className="pt-6 h-full w-full">
                 <HeaderImage />
                 <div className="mt-6">
+                  <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
+                    <h2 className="flex flex-row text-lg font-bold text-gray-800 mb-2">Current User :- <p className="text-blue-600">{userEmail}</p></h2>
+                  </div>
                   <GoogleDriveSearch />
                 </div>
+                {/* <div className="mt-8">
+                  <h2 className="text-lg font-bold text-gray-800 mb-4">LocalStorage Content</h2>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
+                    <pre className="whitespace-pre-wrap">
+                      {JSON.stringify(localStorageContent, null, 2)}
+                    </pre>
+                  </div>
+                </div> */}
                 <div className="mt-8">
-                  <h2 className={`text-lg font-bold ${darkMode ? 'text-gray-200' : 'text-gray-800'} mb-4`}>Folders</h2>
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-sm p-4`}>
+                  <h2 className="text-lg font-bold text-gray-800 mb-4">Folders</h2>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
                     <PlayBookFolders />
                   </div>
                 </div>
                 <div className="mt-8">
-                  <h2 className={`text-lg font-bold ${darkMode ? 'text-gray-200' : 'text-gray-800'} mb-4`}>Files</h2>
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-sm p-4`}>
+                  <h2 className="text-lg font-bold text-gray-800 mb-4">Files</h2>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
                     <PlayBookFiles />
                   </div>
                 </div>
