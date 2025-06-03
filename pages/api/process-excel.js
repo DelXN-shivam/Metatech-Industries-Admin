@@ -131,8 +131,54 @@ export default async function handler(req, res) {
                   const row = worksheet.getRow(rowNumber);
                   const thirdColumnValue = row.getCell(3).value;
                   const fourthColumnValue = row.getCell(4).value;
-                  if ((thirdColumnValue && thirdColumnValue.toString().toLowerCase().includes(query.toLowerCase())) ||
-                      (fourthColumnValue && fourthColumnValue.toString().toLowerCase().includes(query.toLowerCase()))) {
+
+                  // Improved value extraction for third column (Name of Company)
+                  let companyName = '';
+                  if (thirdColumnValue !== null && thirdColumnValue !== undefined) {
+                    if (typeof thirdColumnValue === 'object') {
+                      if (thirdColumnValue.text) {
+                        companyName = thirdColumnValue.text;
+                      } else if (thirdColumnValue.richText) {
+                        companyName = thirdColumnValue.richText.map(rt => rt.text).join('');
+                      } else if (thirdColumnValue.formula) {
+                        companyName = thirdColumnValue.formula;
+                      } else if (thirdColumnValue.result) {
+                        companyName = thirdColumnValue.result.toString();
+                      } else {
+                        companyName = thirdColumnValue.toString().replace(/[^\x20-\x7E]/g, '');
+                      }
+                    } else {
+                      companyName = thirdColumnValue.toString();
+                    }
+                  }
+
+                  // Improved value extraction for fourth column
+                  let enquiryDetails = '';
+                  if (fourthColumnValue !== null && fourthColumnValue !== undefined) {
+                    if (typeof fourthColumnValue === 'object') {
+                      if (fourthColumnValue.text) {
+                        enquiryDetails = fourthColumnValue.text;
+                      } else if (fourthColumnValue.richText) {
+                        enquiryDetails = fourthColumnValue.richText.map(rt => rt.text).join('');
+                      } else if (fourthColumnValue.formula) {
+                        enquiryDetails = fourthColumnValue.formula;
+                      } else if (fourthColumnValue.result) {
+                        enquiryDetails = fourthColumnValue.result.toString();
+                      } else {
+                        enquiryDetails = String(fourthColumnValue).replace(/[^\x20-\x7E]/g, '');
+                      }
+                    } else {
+                      enquiryDetails = String(fourthColumnValue);
+                    }
+                  }
+
+                  // Ensure both values are strings before comparison
+                  const searchQuery = query.toLowerCase();
+                  const companyNameLower = companyName ? String(companyName).toLowerCase() : '';
+                  const enquiryDetailsLower = enquiryDetails ? String(enquiryDetails).toLowerCase() : '';
+
+                  if ((companyNameLower && companyNameLower.includes(searchQuery)) ||
+                      (enquiryDetailsLower && enquiryDetailsLower.includes(searchQuery))) {
                     fileMatches++;
                     hasMatches = true;
                     const firstFourColumns = [];
@@ -141,22 +187,18 @@ export default async function handler(req, res) {
                       let displayValue = '';
                       if (cellValue !== null && cellValue !== undefined) {
                         if (typeof cellValue === 'object') {
-                          if (i === 3) {
-                            if (cellValue.text) {
-                              displayValue = cellValue.text;
-                            } else if (cellValue.richText) {
-                              displayValue = cellValue.richText.map(rt => rt.text).join('');
-                            } else if (cellValue.formula) {
-                              displayValue = cellValue.formula;
-                            } else {
-                              displayValue = cellValue.toString().replace(/[^\x20-\x7E]/g, '');
-                            }
+                          if (cellValue.text) {
+                            displayValue = cellValue.text;
+                          } else if (cellValue.richText) {
+                            displayValue = cellValue.richText.map(rt => rt.text).join('');
+                          } else if (cellValue.formula) {
+                            displayValue = cellValue.formula;
+                          } else if (cellValue.result) {
+                            displayValue = cellValue.result.toString();
+                          } else if (cellValue instanceof Date) {
+                            displayValue = cellValue.toLocaleDateString();
                           } else {
-                            if (cellValue instanceof Date) {
-                              displayValue = cellValue.toLocaleDateString();
-                            } else {
-                              displayValue = JSON.stringify(cellValue);
-                            }
+                            displayValue = cellValue.toString().replace(/[^\x20-\x7E]/g, '');
                           }
                         } else {
                           displayValue = cellValue.toString();

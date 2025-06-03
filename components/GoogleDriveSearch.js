@@ -23,8 +23,8 @@ const GoogleDriveSearch = () => {
     { label: "Google Docs", value: "application/vnd.google-apps.document" },
     { label: "Excel (.xlsx)", value: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
     { label: "MS Excel (.xls)", value: "application/vnd.ms-excel" },
-    { label: "PDF (.pdf)", value: "application/pdf" },
-    { label: "Other", value: "other" }
+    // { label: "PDF (.pdf)", value: "application/pdf" },
+    // { label: "Other", value: "other" }
   ]);
   const [selectedFileType, setSelectedFileType] = useState("");
   const accessToken = localStorage.getItem("access_token");
@@ -1552,14 +1552,17 @@ const GoogleDriveSearch = () => {
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <a
-                      href={`https://docs.google.com/document/d/${result.id}/edit`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:text-blue-800 font-medium truncate block"
+                    <div
+                      onClick={() => {
+                        // Use direct Google Drive URL for all file types
+                        const directUrl = `https://drive.google.com/file/d/${result.id}/view`;
+                        // Open directly in a new tab
+                        window.open(directUrl, '_blank');
+                      }}
+                      className="text-blue-600 hover:text-blue-800 font-medium truncate block cursor-pointer"
                     >
                       {result.name}
-                    </a>
+                    </div>
                     <p className="text-sm text-gray-500 truncate">{result.mimeType}</p>
                   </div>
                   <button
