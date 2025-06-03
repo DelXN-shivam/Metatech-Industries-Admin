@@ -89,16 +89,14 @@ export default async function handler(req, res) {
             const columnNames = [];
             for (let i = 1; i <= 4; i++) {
               const cellValue = firstRow.getCell(i).value;
-              // Use specific column names instead of generic ones
-              const defaultNames = ['Code', 'Date', 'Name of Company', 'Enquiry Details / Product'];
-              columnNames.push(cellValue ? cellValue.toString().trim() : defaultNames[i - 1]);
+              columnNames.push(cellValue ? cellValue.toString().trim() : `Column ${i}`);
             }
             rows.push(new TableRow({
               children: [
                 new TableCell({
                   children: [new Paragraph({
                     children: [new TextRun({
-                      text: 'Sr. No.',
+                      text: 'Row #',
                       bold: true,
                       size: 24,
                     })],

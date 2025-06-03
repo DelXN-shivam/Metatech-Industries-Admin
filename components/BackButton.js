@@ -62,7 +62,7 @@ const BackButton = () => {
       as={`/list/${fparent}`}
     >
       <button
-        className="bg-gray-200 text-gray-800 hover:bg-gray-300 p-2 rounded-md transition duration-300"
+        className={`${darkMode ? 'bg-gray-700 text-gray-200 hover:bg-gray-600' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'} p-2 rounded-md transition duration-300`}
         onClick={() => {
           const container = document.querySelector(".searchContainer");
           if (container) {

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { FiFolder, FiFile, FiFolderPlus, FiFilePlus, FiDatabase } from 'react-icons/fi';
+import { useTheme } from './ThemeContext';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import config from '../config.json';
 
 const StatsCards = () => {
+  const { darkMode } = useTheme();
   const router = useRouter();
   const fid = typeof router.query.fid !== "undefined" ? router.query.fid : "root";
   const [stats, setStats] = useState({
@@ -142,6 +144,13 @@ const StatsCards = () => {
         iconBg: 'bg-blue-100',
         iconColor: 'text-blue-600',
       },
+      darkMode: {
+        gradient: 'from-blue-400 to-blue-500',
+        textColor: 'text-blue-300',
+        borderColor: 'border-blue-600',
+        iconBg: 'bg-blue-300',
+        iconColor: 'text-blue-300',
+      }
     },
     {
       title: 'Files',
@@ -154,6 +163,13 @@ const StatsCards = () => {
         iconBg: 'bg-green-100',
         iconColor: 'text-green-600',
       },
+      darkMode: {
+        gradient: 'from-green-400 to-green-500',
+        textColor: 'text-green-300',
+        borderColor: 'border-green-600',
+        iconBg: 'bg-green-300',
+        iconColor: 'text-green-300',
+      }
     },
     {
       title: 'Total Size',
@@ -166,6 +182,13 @@ const StatsCards = () => {
         iconBg: 'bg-pink-100',
         iconColor: 'text-pink-600',
       },
+      darkMode: {
+        gradient: 'from-pink-400 to-pink-500',
+        textColor: 'text-pink-300',
+        borderColor: 'border-pink-600',
+        iconBg: 'bg-pink-300',
+        iconColor: 'text-pink-300',
+      }
     },
     {
       title: 'New Folders',
@@ -178,6 +201,13 @@ const StatsCards = () => {
         iconBg: 'bg-purple-100',
         iconColor: 'text-purple-600',
       },
+      darkMode: {
+        gradient: 'from-purple-400 to-purple-500',
+        textColor: 'text-purple-300',
+        borderColor: 'border-purple-600',
+        iconBg: 'bg-purple-300',
+        iconColor: 'text-purple-300',
+      }
     },
     {
       title: 'New Files',
@@ -190,35 +220,43 @@ const StatsCards = () => {
         iconBg: 'bg-orange-100',
         iconColor: 'text-orange-600',
       },
+      darkMode: {
+        gradient: 'from-orange-400 to-orange-500',
+        textColor: 'text-orange-300',
+        borderColor: 'border-orange-600',
+        iconBg: 'bg-orange-300',
+        iconColor: 'text-orange-100',
+      }
     }
   ];
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
       {cards.map((card, index) => {
+        const theme = darkMode ? card.darkMode : card.lightMode;
         return (
           <div
             key={index}
-            className={`bg-gradient-to-br h-44 ${card.lightMode.gradient} ${card.lightMode.borderColor} border rounded-lg p-5 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-center relative overflow-hidden`}
+            className={`bg-gradient-to-br h-44 ${theme.gradient} ${theme.borderColor} border rounded-lg p-5 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-center relative overflow-hidden`}
           >
             <div className="flex flex-col items-center justify-center text-center">
-              <div className={`${card.lightMode.iconBg} p-3 rounded-full shadow-inner mb-3 relative z-10`}>
-                <div className={card.lightMode.iconColor}>
+              <div className={`${theme.iconBg} p-3 rounded-full shadow-inner mb-3 relative z-10`}>
+                <div className={theme.iconColor}>
                   {card.icon}
                 </div>
               </div>
-              <p className={`text-lg font-medium ${card.lightMode.textColor} relative z-10`}>{card.title}</p>
+              <p className={`text-lg font-medium ${theme.textColor} relative z-10`}>{card.title}</p>
               {loading ? (
                 <div className="mt-1 relative z-10">
                   <div className="flex items-center justify-center">
                     <div className="relative">
-                      <div className="w-16 h-8 rounded-lg bg-gray-100 shadow-inner"></div>
-                      <div className="absolute top-0 left-0 w-1/3 h-full rounded-lg bg-gray-300 animate-shimmer"></div>
+                      <div className={`w-16 h-8 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-100'} shadow-inner`}></div>
+                      <div className={`absolute top-0 left-0 w-1/3 h-full rounded-lg ${darkMode ? 'bg-gray-500' : 'bg-gray-300'} animate-shimmer`}></div>
                     </div>
                   </div>
                 </div>
               ) : (
-                <p className="text-2xl font-bold mt-1 text-gray-600 relative z-10">{card.value}</p>
+                <p className={`text-2xl font-bold mt-1 ${darkMode ? 'text-white' : 'text-gray-600'} relative z-10`}>{card.value}</p>
               )}
             </div>
             {loading && (

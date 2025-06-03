@@ -5,9 +5,11 @@ import { useRouter } from "next/router";
 import axios from "axios";
 import Link from "next/link";
 import config from "../config.json";
+import { useTheme } from "./ThemeContext";
 
 const PlayBookFolders = () => {
   const router = useRouter();
+  const { darkMode } = useTheme();
   const fid = typeof router.query.fid !== "undefined" ? router.query.fid : "root";
   const isDashboard = router.pathname === '/';
   const teamDriveId = config.directory.team_drive;
@@ -64,12 +66,12 @@ const PlayBookFolders = () => {
 
   const renderFolderGrid = (folders, title, isShared = false) => (
     <div className="mb-8">
-      <h2 className="text-lg font-semibold mb-4 text-gray-800">
+      <h2 className={`text-lg font-semibold mb-4 ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>
         {title}
       </h2>
       {folders.length === 0 ? (
         <div className="text-center py-4">
-          <div className="text-gray-400">
+          <div className={darkMode ? "text-gray-500" : "text-gray-400"}>
             <p className="text-sm font-medium">No {title.toLowerCase()} found</p>
           </div>
         </div>
@@ -87,7 +89,7 @@ const PlayBookFolders = () => {
               as={`/list/${folder.id}`}
               key={folder.id}
             >
-              <div className="group bg-white border-gray-100 hover:border-blue-200 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 border p-4">
+              <div className={`group ${darkMode ? 'bg-gray-700 border-gray-600 hover:border-blue-700' : 'bg-white border-gray-100 hover:border-blue-200'} rounded-lg shadow-sm hover:shadow-md transition-all duration-300 border p-4`}>
                 <div className="flex items-center space-x-3">
                   <div className="flex-shrink-0">
                     <svg className="h-8 w-8 text-blue-500 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -95,10 +97,10 @@ const PlayBookFolders = () => {
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-600">
+                    <p className={`text-sm font-medium ${darkMode ? 'text-gray-100' : 'text-gray-900'} truncate group-hover:text-blue-600`}>
                       {folder.name}
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                       {isShared ? 'Shared Folder' : 'Folder'}
                     </p>
                   </div>
