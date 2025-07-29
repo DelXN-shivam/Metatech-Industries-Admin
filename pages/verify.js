@@ -14,7 +14,8 @@ export default function VerifyPage() {
   // List of allowed emails
   const allowedEmails = [
     'mktg@metatechind.com',
-    'testoktest1@gmail.com'
+    'testoktest1@gmail.com',
+    'sales@metatechind.com'
   ];
 
   useEffect(() => {
