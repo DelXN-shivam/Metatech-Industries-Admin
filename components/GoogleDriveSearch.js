@@ -458,13 +458,7 @@ const GoogleDriveSearch = () => {
           // Token expired, try to refresh
           const newAccessToken = await refreshAccessToken();
           if (newAccessToken) {
-            // Update the access token in the request
-            const originalRequest = requestFn.toString();
-            const newRequest = originalRequest.replace(
-              /Bearer\s+[^"]+/,
-              `Bearer ${newAccessToken}`
-            );
-            requestFn = new Function('return ' + newRequest)();
+            // Retry with new token
             continue;
           }
         }
