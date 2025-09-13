@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useRouter } from "next/router";
+import config from '../config.json';
 
 const GoogleDriveSearch = () => {
   const router = useRouter();
@@ -17,14 +18,13 @@ const GoogleDriveSearch = () => {
   const [selectedFolder, setSelectedFolder] = useState("");
   const [lastDownloadedFile, setLastDownloadedFile] = useState(null);
   const [fileTypes, setFileTypes] = useState([
-    { label: "All Files", value: "" },
+    { label: "All Supported Files", value: "" },
     { label: "Word Document (.docx)", value: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
     { label: "MS Word (.doc)", value: "application/msword" },
     { label: "Google Docs", value: "application/vnd.google-apps.document" },
     { label: "Excel (.xlsx)", value: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
     { label: "MS Excel (.xls)", value: "application/vnd.ms-excel" },
-    // { label: "PDF (.pdf)", value: "application/pdf" },
-    // { label: "Other", value: "other" }
+    { label: "Google Sheets", value: "application/vnd.google-apps.spreadsheet" }
   ]);
   const [selectedFileType, setSelectedFileType] = useState("");
   const accessToken = localStorage.getItem("access_token");
@@ -190,6 +190,9 @@ const GoogleDriveSearch = () => {
             q: `mimeType='application/vnd.google-apps.folder' and trashed = false and parents in '${folderIds.join(
               "','"
             )}'`,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+            corpora: 'allDrives'
           },
         });
 
@@ -221,49 +224,99 @@ const GoogleDriveSearch = () => {
     setExtractedDoc(null);
     setLastDownloadedFile(null);
     setSearchError(null);
+    
+    console.log('🔍 Search Debug Info:');
+    console.log('- Current folder ID (fid):', fid);
+    console.log('- Selected folder:', selectedFolder);
+    console.log('- Search query:', query);
+    console.log('- File type filter:', selectedFileType);
 
     try {
       let folderIds = [selectedFolder || fid];
       if (!selectedFolder) {
         folderIds = await fetchAllSubfolders(folderIds);
       }
+      
+      console.log('- Folder IDs to search:', folderIds);
 
-      let fileTypeQuery = "";
-      if (selectedFileType) {
-        if (selectedFileType === "other") {
-          fileTypeQuery = " and (mimeType!='application/vnd.google-apps.document' and mimeType!='application/openxmlformats-officedocument.wordprocessingml.document' and mimeType!='application/msword')";
-        } else if (selectedFileType === "application/vnd.google-apps.document") {
-          fileTypeQuery = " and mimeType='application/vnd.google-apps.document'";
-        } else if (selectedFileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-          fileTypeQuery = " and mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'";
-        } else if (selectedFileType === "application/msword") {
-          fileTypeQuery = " and mimeType='application/msword'";
-        } else {
-          fileTypeQuery = ` and mimeType='${selectedFileType}'`;
-        }
-      }
+
 
       const escapedQuery = query.replace(/'/g, "\\'");
 
-      // Modified search query to only search in content
-      const searchQuery = `(mimeType!='application/vnd.google-apps.folder' and trashed = false) and ` +
-        `((parents in '${folderIds.join("','")}') or ` + // Files in selected folders
-        `(sharedWithMe = true)) and ` + // Files shared with me
-        `(fullText contains '${escapedQuery}')${fileTypeQuery}`; // Only search in content
+      // Enhanced search query with expanded scope for Excel and Word files
+      let fileTypeQuery = "";
+      if (selectedFileType) {
+        fileTypeQuery = ` and mimeType='${selectedFileType}'`;
+      } else {
+        const allowedTypes = [
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/msword',
+          'application/vnd.google-apps.document',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'application/vnd.google-apps.spreadsheet'
+        ];
+        fileTypeQuery = ` and (${allowedTypes.map(type => `mimeType='${type}'`).join(' or ')})`;
+      }
+      
+      let searchQuery;
+      if (fid === "root" && !selectedFolder) {
+        searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery} and ` +
+          `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
+      } else {
+        searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false and ` +
+          `(parents in '${folderIds.join("','")}'${folderIds.length > 0 ? ' or sharedWithMe=true' : ''})${fileTypeQuery} and ` +
+          `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
+      }
+      
+      console.log('- Final search query:', searchQuery);
 
       const res = await axios.get("https://www.googleapis.com/drive/v3/files", {
         headers: { Authorization: `Bearer ${accessToken}` },
         params: {
           q: searchQuery,
-          fields: "files(id,name,mimeType,size,modifiedTime)",
+          fields: "files(id,name,mimeType,size,modifiedTime),nextPageToken",
+          pageSize: 100, // Increase from default 10 to 100
           supportsAllDrives: true,
           includeItemsFromAllDrives: true,
           corpora: 'allDrives'
         },
       });
 
-      const files = res.data.files || [];
+      let files = res.data.files || [];
+      
+      // Handle pagination to get more results
+      let nextPageToken = res.data.nextPageToken;
+      while (nextPageToken && files.length < 200) { // Limit to 200 total results
+        try {
+          const nextRes = await axios.get("https://www.googleapis.com/drive/v3/files", {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            params: {
+              q: searchQuery,
+              fields: "files(id,name,mimeType,size,modifiedTime),nextPageToken",
+              pageSize: 100,
+              pageToken: nextPageToken,
+              supportsAllDrives: true,
+              includeItemsFromAllDrives: true,
+              corpora: 'allDrives'
+            },
+          });
+          
+          const nextFiles = nextRes.data.files || [];
+          files = [...files, ...nextFiles];
+          nextPageToken = nextRes.data.nextPageToken;
+        } catch (paginationError) {
+          console.error('Error fetching additional pages:', paginationError);
+          break;
+        }
+      }
+      
       setResults(files);
+      
+      console.log('✅ Search completed. Found', files.length, 'files');
+      if (files.length > 0) {
+        console.log('- First few results:', files.slice(0, 3).map(f => ({ name: f.name, id: f.id, mimeType: f.mimeType })));
+      }
 
       if (files.length === 0) {
         let message = `No results found for "${query}"`;
@@ -275,10 +328,16 @@ const GoogleDriveSearch = () => {
           const selectedTypeName = fileTypes.find(t => t.value === selectedFileType)?.label || 'selected file type';
           message += ` with ${selectedTypeName}`;
         }
-        message += ". Please try different filters.";
+        message += ". Try checking: 1) File permissions 2) Shared drives access 3) Different search terms 4) Check browser console for debug info.";
         setSearchError(message);
       }
     } catch (err) {
+      console.error('❌ Search error:', err);
+      if (err.response) {
+        console.error('- Response status:', err.response.status);
+        console.error('- Response data:', err.response.data);
+      }
+      
       if (err.response && err.response.status === 401) {
         setError(new Error("Access token expired. Please refresh."));
       } else {
@@ -980,9 +1039,12 @@ const GoogleDriveSearch = () => {
 
       // Process Excel files if any
       if (excelFileList.length > 0) {
+        console.log('📊 Processing Excel files:', excelFileList.length);
+        console.log('- Excel files found:', excelFileList.map(f => ({ name: f.name, mimeType: f.mimeType })));
         setProcessingStatus('Processing Excel files...');
         const excelPromises = excelFileList.map(async (file) => {
           try {
+            console.log(`Processing Excel file: ${file.name} (${file.mimeType})`);
             // For Google Sheets, export as Excel first
             if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
               const response = await retryRequest(() =>
@@ -1027,7 +1089,12 @@ const GoogleDriveSearch = () => {
         const processedExcelFiles = await Promise.all(excelPromises);
         const validExcelFiles = processedExcelFiles.filter(Boolean);
         
+        console.log('📊 Excel processing results:');
+        console.log('- Processed files:', processedExcelFiles.length);
+        console.log('- Valid files:', validExcelFiles.length);
+        
         if (validExcelFiles.length === 0) {
+          console.error('❌ No Excel files could be processed');
           throw new Error('Failed to process any Excel files');
         }
         
@@ -1352,7 +1419,7 @@ const GoogleDriveSearch = () => {
             }}
             onKeyPress={handleKeyPress}
             className={`w-full p-3 pl-10 border ${searchError ? 'border-red-500' : 'border-gray-300 bg-white text-gray-900'} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
-            placeholder="Search files based on content..."
+            placeholder="Search in file names, content, and descriptions..."
           />
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
