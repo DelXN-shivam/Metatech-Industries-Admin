@@ -184,17 +184,19 @@ const GoogleDriveSearch = () => {
 
     while (folderIds.length > 0) {
       try {
-        const res = await axios.get("https://www.googleapis.com/drive/v3/files", {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: {
-            q: `mimeType='application/vnd.google-apps.folder' and trashed = false and parents in '${folderIds.join(
-              "','"
-            )}'`,
-            supportsAllDrives: true,
-            includeItemsFromAllDrives: true,
-            corpora: 'allDrives'
-          },
-        });
+        const res = await makeAuthenticatedRequest(() =>
+          axios.get("https://www.googleapis.com/drive/v3/files", {
+            headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+            params: {
+              q: `mimeType='application/vnd.google-apps.folder' and trashed = false and parents in '${folderIds.join(
+                "','"
+              )}'`,
+              supportsAllDrives: true,
+              includeItemsFromAllDrives: true,
+              corpora: 'allDrives'
+            },
+          })
+        );
 
         const subFolders = res.data.files || [];
         if (subFolders.length === 0) break;
@@ -209,6 +211,21 @@ const GoogleDriveSearch = () => {
     }
 
     return allFolderIds;
+  };
+
+  // Parse multiple queries from comma-separated input
+  const parseQueries = (queryString) => {
+    return queryString
+      .split(',')
+      .map(q => q.trim())
+      .filter(q => q.length > 0);
+  };
+
+  // Check if file content contains all queries
+  const containsAllQueries = (content, queries) => {
+    if (!content || queries.length === 0) return false;
+    const contentLower = content.toLowerCase();
+    return queries.every(query => contentLower.includes(query.toLowerCase()));
   };
 
   // Search files within the folder and its subfolders
@@ -231,6 +248,13 @@ const GoogleDriveSearch = () => {
     console.log('- Search query:', query);
     console.log('- File type filter:', selectedFileType);
 
+    // Parse multiple queries
+    const queries = parseQueries(query);
+    const isMultiQuery = queries.length > 1;
+    
+    console.log('- Parsed queries:', queries);
+    console.log('- Multi-query search:', isMultiQuery);
+
     try {
       let folderIds = [selectedFolder || fid];
       if (!selectedFolder) {
@@ -239,12 +263,10 @@ const GoogleDriveSearch = () => {
       
       console.log('- Folder IDs to search:', folderIds);
 
-
-
-      const escapedQuery = query.replace(/'/g, "\\'");
-
-      // Enhanced search query with expanded scope for Excel and Word files
+      // For multi-query search, we need to get all files first, then filter by content
+      let searchQuery;
       let fileTypeQuery = "";
+      
       if (selectedFileType) {
         fileTypeQuery = ` and mimeType='${selectedFileType}'`;
       } else {
@@ -258,49 +280,70 @@ const GoogleDriveSearch = () => {
         ];
         fileTypeQuery = ` and (${allowedTypes.map(type => `mimeType='${type}'`).join(' or ')})`;
       }
-      
-      let searchQuery;
-      if (fid === "root" && !selectedFolder) {
-        searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery} and ` +
-          `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
+
+      if (isMultiQuery) {
+        // For multi-query, use Google Drive's native search with all terms
+        const searchTerms = queries.map(q => q.replace(/'/g, "\\'"));
+        const fullTextQuery = searchTerms.map(term => `fullText contains '${term}'`).join(' and ');
+        const nameQuery = searchTerms.map(term => `name contains '${term}'`).join(' and ');
+        
+        if (fid === "root" && !selectedFolder) {
+          searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery} and ` +
+            `(${nameQuery} or ${fullTextQuery})`;
+        } else {
+          searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false and ` +
+            `(parents in '${folderIds.join("','")}'${folderIds.length > 0 ? ' or sharedWithMe=true' : ''})${fileTypeQuery} and ` +
+            `(${nameQuery} or ${fullTextQuery})`;
+        }
       } else {
-        searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false and ` +
-          `(parents in '${folderIds.join("','")}'${folderIds.length > 0 ? ' or sharedWithMe=true' : ''})${fileTypeQuery} and ` +
-          `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
+        // Single query - use existing logic
+        const escapedQuery = queries[0].replace(/'/g, "\\'");
+        if (fid === "root" && !selectedFolder) {
+          searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery} and ` +
+            `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
+        } else {
+          searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false and ` +
+            `(parents in '${folderIds.join("','")}'${folderIds.length > 0 ? ' or sharedWithMe=true' : ''})${fileTypeQuery} and ` +
+            `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
+        }
       }
       
       console.log('- Final search query:', searchQuery);
 
-      const res = await axios.get("https://www.googleapis.com/drive/v3/files", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        params: {
-          q: searchQuery,
-          fields: "files(id,name,mimeType,size,modifiedTime),nextPageToken",
-          pageSize: 100, // Increase from default 10 to 100
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
-          corpora: 'allDrives'
-        },
-      });
+      const res = await makeAuthenticatedRequest(() =>
+        axios.get("https://www.googleapis.com/drive/v3/files", {
+          headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+          params: {
+            q: searchQuery,
+            fields: "files(id,name,mimeType,size,modifiedTime),nextPageToken",
+            pageSize: 100,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+            corpora: 'allDrives'
+          },
+        })
+      );
 
       let files = res.data.files || [];
       
-      // Handle pagination to get more results
+      // Handle pagination
       let nextPageToken = res.data.nextPageToken;
-      while (nextPageToken && files.length < 200) { // Limit to 200 total results
+      while (nextPageToken && files.length < 500) { // Increased limit for multi-query
         try {
-          const nextRes = await axios.get("https://www.googleapis.com/drive/v3/files", {
-            headers: { Authorization: `Bearer ${accessToken}` },
-            params: {
-              q: searchQuery,
-              fields: "files(id,name,mimeType,size,modifiedTime),nextPageToken",
-              pageSize: 100,
-              pageToken: nextPageToken,
-              supportsAllDrives: true,
-              includeItemsFromAllDrives: true,
-              corpora: 'allDrives'
-            },
-          });
+          const nextRes = await makeAuthenticatedRequest(() =>
+            axios.get("https://www.googleapis.com/drive/v3/files", {
+              headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+              params: {
+                q: searchQuery,
+                fields: "files(id,name,mimeType,size,modifiedTime),nextPageToken",
+                pageSize: 100,
+                pageToken: nextPageToken,
+                supportsAllDrives: true,
+                includeItemsFromAllDrives: true,
+                corpora: 'allDrives'
+              },
+            })
+          );
           
           const nextFiles = nextRes.data.files || [];
           files = [...files, ...nextFiles];
@@ -310,8 +353,17 @@ const GoogleDriveSearch = () => {
           break;
         }
       }
+
+      console.log('📄 Initial files found:', files.length);
+
+      // For multi-query search, Google Drive's native search should have already filtered correctly
+      // No additional filtering needed since we're using Google's fullText search
+      if (isMultiQuery && files.length > 0) {
+        console.log('✅ Multi-query search using Google Drive native filtering. Found:', files.length, 'files');
+      }
       
       setResults(files);
+      setSearchError(null);
       
       console.log('✅ Search completed. Found', files.length, 'files');
       if (files.length > 0) {
@@ -319,7 +371,13 @@ const GoogleDriveSearch = () => {
       }
 
       if (files.length === 0) {
-        let message = `No results found for "${query}"`;
+        let message;
+        if (isMultiQuery) {
+          message = `No files found containing ALL queries: ${queries.join(', ')}`;
+        } else {
+          message = `No results found for "${query}"`;
+        }
+        
         if (selectedFolder) {
           const selectedFolderName = folders.find(f => f.id === selectedFolder)?.name || 'selected folder';
           message += ` in ${selectedFolderName}`;
@@ -328,7 +386,13 @@ const GoogleDriveSearch = () => {
           const selectedTypeName = fileTypes.find(t => t.value === selectedFileType)?.label || 'selected file type';
           message += ` with ${selectedTypeName}`;
         }
-        message += ". Try checking: 1) File permissions 2) Shared drives access 3) Different search terms 4) Check browser console for debug info.";
+        
+        if (isMultiQuery) {
+          message += ". Try: 1) Using fewer search terms 2) Checking spelling 3) Using broader terms";
+        } else {
+          message += ". Try checking: 1) File permissions 2) Shared drives access 3) Different search terms";
+        }
+        
         setSearchError(message);
       }
     } catch (err) {
@@ -842,7 +906,9 @@ const GoogleDriveSearch = () => {
     return results;
   };
 
-  // Add back the extractContentFromFile function
+
+
+  // Full content extraction (existing function, optimized)
   const extractContentFromFile = async (fileId, fileName, mimeType) => {
     try {
       let content = '';
@@ -1413,7 +1479,7 @@ const GoogleDriveSearch = () => {
             }}
             onKeyPress={handleKeyPress}
             className={`w-full p-3 pl-10 border ${searchError ? 'border-red-500' : 'border-gray-300 bg-white text-gray-900'} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
-            placeholder="Search in file names, content, and descriptions..."
+            placeholder="Search in file names and content... (Use commas to search for multiple terms: term1, term2, term3)"
           />
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1458,6 +1524,24 @@ const GoogleDriveSearch = () => {
         </button>
       </div>
 
+      {/* Multi-Query Indicator */}
+      {parseQueries(query).length > 1 && (
+        <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center space-x-2">
+            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-sm font-medium text-blue-800">Multi-Query Search Active</span>
+          </div>
+          <p className="text-xs text-blue-600 mt-1">
+            Searching for files containing ALL terms: <strong>{parseQueries(query).join(', ')}</strong>
+          </p>
+          <p className="text-xs text-blue-500 mt-1">
+            💡 Tip: Files must contain all search terms to appear in results
+          </p>
+        </div>
+      )}
+
       {/* Advanced Options Toggle */}
       <div className="mt-4">
         <button
@@ -1473,43 +1557,56 @@ const GoogleDriveSearch = () => {
 
       {/* Filter Dropdowns */}
       {showAdvancedOptions && (
-        <div className="flex gap-4 mt-4">
-          {/* Folders Dropdown */}
-          <div className="flex-1">
-            <label htmlFor="folder-select" className="block text-sm font-medium text-gray-700 mb-1">
-              Folder
-            </label>
-            <select
-              id="folder-select"
-              value={selectedFolder}
-              onChange={(e) => setSelectedFolder(e.target.value)}
-              className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
-            >
-              {folders.map((folder) => (
-                <option key={folder.id} value={folder.id}>
-                  {folder.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="space-y-4 mt-4">
+          <div className="flex gap-4">
+            {/* Folders Dropdown */}
+            <div className="flex-1">
+              <label htmlFor="folder-select" className="block text-sm font-medium text-gray-700 mb-1">
+                Folder
+              </label>
+              <select
+                id="folder-select"
+                value={selectedFolder}
+                onChange={(e) => setSelectedFolder(e.target.value)}
+                className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
+              >
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          {/* File Types Dropdown */}
-          <div className="flex-1">
-            <label htmlFor="file-type-select" className="block text-sm font-medium text-gray-700 mb-1">
-              File Type
-            </label>
-            <select
-              id="file-type-select"
-              value={selectedFileType}
-              onChange={(e) => setSelectedFileType(e.target.value)}
-              className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
-            >
-              {fileTypes.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
+            {/* File Types Dropdown */}
+            <div className="flex-1">
+              <label htmlFor="file-type-select" className="block text-sm font-medium text-gray-700 mb-1">
+                File Type
+              </label>
+              <select
+                id="file-type-select"
+                value={selectedFileType}
+                onChange={(e) => setSelectedFileType(e.target.value)}
+                className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
+              >
+                {fileTypes.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          
+          {/* Search Tips */}
+          <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
+            <h4 className="text-sm font-medium text-gray-700 mb-2">Search Tips:</h4>
+            <ul className="text-xs text-gray-600 space-y-1">
+              <li>• <strong>Single term:</strong> "contract" - finds files containing "contract"</li>
+              <li>• <strong>Multiple terms:</strong> "contract, agreement, 2024" - finds files containing ALL three terms</li>
+              <li>• <strong>Exact phrases:</strong> Use quotes for exact matches</li>
+              <li>• <strong>Performance:</strong> Multi-query search may take longer as it analyzes file content</li>
+            </ul>
           </div>
         </div>
       )}
@@ -1602,42 +1699,60 @@ const GoogleDriveSearch = () => {
       {/* Search Results */}
       {results.length > 0 && (
         <div className="mt-4">
-          <h3 className="text-lg font-semibold mb-2 text-gray-700">Search Results ({results.length})</h3>
+          <h3 className="text-lg font-semibold mb-2 text-gray-700">
+            Search Results ({results.length})
+            {parseQueries(query).length > 1 && (
+              <span className="text-sm font-normal text-blue-600 ml-2">
+                (Files containing ALL terms: {parseQueries(query).join(', ')})
+              </span>
+            )}
+          </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.map((result) => (
-              <div key={result.id} className="bg-white border-gray-100 hover:border-blue-200 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 border p-4">
-                <div className="flex items-center space-x-3">
-                  <div className="flex-shrink-0">
-                    <svg className="h-8 w-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div
-                      onClick={() => {
-                        // Use direct Google Drive URL for all file types
-                        const directUrl = `https://drive.google.com/file/d/${result.id}/view`;
-                        // Open directly in a new tab
-                        window.open(directUrl, '_blank');
-                      }}
-                      className="text-blue-600 hover:text-blue-800 font-medium truncate block cursor-pointer"
-                    >
-                      {result.name}
+            {results.map((result) => {
+              const isMultiQuery = parseQueries(query).length > 1;
+              return (
+                <div key={result.id} className={`bg-white border-gray-100 hover:border-blue-200 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 border p-4 ${isMultiQuery ? 'ring-1 ring-green-200' : ''}`}>
+                  <div className="flex items-center space-x-3">
+                    <div className="flex-shrink-0">
+                      <div className="relative">
+                        <svg className="h-8 w-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        {isMultiQuery && (
+                          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full" title="Contains all search terms"></div>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-sm text-gray-500 truncate">{result.mimeType}</p>
+                    <div className="flex-1 min-w-0">
+                      <div
+                        onClick={() => {
+                          // Use direct Google Drive URL for all file types
+                          const directUrl = `https://drive.google.com/file/d/${result.id}/view`;
+                          // Open directly in a new tab
+                          window.open(directUrl, '_blank');
+                        }}
+                        className="text-blue-600 hover:text-blue-800 font-medium truncate block cursor-pointer"
+                      >
+                        {result.name}
+                      </div>
+                      <p className="text-sm text-gray-500 truncate">{result.mimeType}</p>
+                      {isMultiQuery && (
+                        <p className="text-xs text-green-600 mt-1">✓ Contains all search terms</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => downloadFile(result.id, result.name, result.mimeType)}
+                      className="p-2 text-gray-500 hover:text-blue-600 transition-colors"
+                      title="Download file"
+                    >
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                    </button>
                   </div>
-                  <button
-                    onClick={() => downloadFile(result.id, result.name, result.mimeType)}
-                    className="p-2 text-gray-500 hover:text-blue-600 transition-colors"
-                    title="Download file"
-                  >
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                  </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

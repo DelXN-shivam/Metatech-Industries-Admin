@@ -30,8 +30,45 @@ export default async function handler(req, res) {
     const formattedDate = now.toLocaleDateString();
     const formattedTime = now.toLocaleTimeString();
 
+    // Parse queries for debugging
+    const queries = query.split(',').map(q => q.trim().toLowerCase()).filter(q => q.length > 0);
+    console.log('Processing Excel files with queries:', queries);
+
     // Prepare an array to collect all content
-    const allChildren = [];
+    const allChildren = [
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: `Search Query: ${query}`,
+            highlight: 'yellow',
+            bold: true,
+          }),
+        ],
+        spacing: { before: 120, after: 60 },
+      }),
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: `Total Files: ${files.length}`,
+            bold: true,
+          }),
+        ],
+        spacing: { before: 60, after: 60 },
+      }),
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: `Date: ${formattedDate} | Time: ${formattedTime}`,
+            bold: true,
+          }),
+        ],
+        spacing: { before: 60, after: 120 },
+      }),
+      new Paragraph({
+        text: '―'.repeat(46),
+        spacing: { before: 120, after: 120 },
+      })
+    ];
 
     let totalMatches = 0;
     let filesWithMatches = 0;
@@ -88,14 +125,15 @@ export default async function handler(req, res) {
               for (let rowNumber = startRow; rowNumber <= endRow; rowNumber++) {
                 try {
                   const row = worksheet.getRow(rowNumber);
-                  const searchQuery = query.toLowerCase();
+                  // Use the already parsed queries from the main function
                   let hasMatchesInRow = false;
 
                   // Arrays to hold non-empty column data and their names
                   const filledColumnValues = [];
                   const filledColumnNames = [];
+                  const allRowText = []; // Collect all text from the row
 
-                  // Loop through every cell in the row to check for the query and collect data
+                  // Loop through every cell in the row to collect data
                   for (let i = 1; i <= row.cellCount; i++) {
                     const cellValue = row.getCell(i).value;
                     let cellText = "";
@@ -125,6 +163,11 @@ export default async function handler(req, res) {
                       }
                     }
 
+                    // Add to all row text for multi-query checking
+                    if (cellText) {
+                      allRowText.push(String(cellText).toLowerCase());
+                    }
+
                     // Only store the column data if it's not empty
                     if (
                       cellValue !== null &&
@@ -147,13 +190,32 @@ export default async function handler(req, res) {
                         predefinedColumns[i - 1] || `Column ${i}`;
                       filledColumnNames.push(columnName);
                     }
-
-                    if (cellText.toLowerCase().includes(searchQuery)) {
-                      hasMatchesInRow = true;
-                    }
                   }
 
-                  if (hasMatchesInRow) {
+                  // Check if row contains ANY of the queries
+                  const rowTextCombined = allRowText.join(" ");
+                  
+                  // Debug every row that has content
+                  if (rowTextCombined.trim().length > 0) {
+                    console.log(`\n--- Row ${rowNumber} Debug ---`);
+                    console.log(`Row text: "${rowTextCombined}"`);
+                    console.log(`Queries to find: [${queries.join(', ')}]`);
+                    console.log(`Filled columns: ${filledColumnValues.length}`);
+                    
+                    // Check if ANY query matches (changed from ALL to ANY)
+                    const matches = queries.map(q => {
+                      const found = rowTextCombined.includes(q);
+                      console.log(`  Query "${q}" found: ${found}`);
+                      return found;
+                    });
+                    hasMatchesInRow = matches.some(m => m); // Changed from .every() to .some()
+                    console.log(`Any query matches: ${hasMatchesInRow}`);
+                    
+                    console.log(`Will include row: ${hasMatchesInRow && filledColumnValues.length > 0}`);
+                  }
+
+                  if (hasMatchesInRow && filledColumnValues.length > 0) {
+                    console.log(`✅ Adding row ${rowNumber} to results`);
                     fileMatches++;
                     hasMatches = true;
 
