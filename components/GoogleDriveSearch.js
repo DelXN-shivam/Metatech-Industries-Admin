@@ -19,14 +19,17 @@ const GoogleDriveSearch = () => {
   const [lastDownloadedFile, setLastDownloadedFile] = useState(null);
   const [fileTypes, setFileTypes] = useState([
     { label: "All Supported Files", value: "" },
-    { label: "Word Document (.docx)", value: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
-    { label: "MS Word (.doc)", value: "application/msword" },
-    { label: "Google Docs", value: "application/vnd.google-apps.document" },
-    { label: "Excel (.xlsx)", value: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-    { label: "MS Excel (.xls)", value: "application/vnd.ms-excel" },
-    { label: "Google Sheets", value: "application/vnd.google-apps.spreadsheet" }
+    { label: "Documents", value: "documents" },
+    { label: "Spreadsheets", value: "spreadsheets" }
   ]);
+  const [fileNameFilter, setFileNameFilter] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState([]);
   const [selectedFileType, setSelectedFileType] = useState("");
+  const nameFilters = [
+    { label: "All Files", value: "" },
+    { label: "Enquiry Files", value: "enquiry" },
+    { label: "PO Files", value: "po" }
+  ];
   const accessToken = localStorage.getItem("access_token");
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
@@ -267,8 +270,20 @@ const GoogleDriveSearch = () => {
       let searchQuery;
       let fileTypeQuery = "";
       
-      if (selectedFileType) {
-        fileTypeQuery = ` and mimeType='${selectedFileType}'`;
+      if (selectedFileType === "documents") {
+        const docTypes = [
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/msword',
+          'application/vnd.google-apps.document'
+        ];
+        fileTypeQuery = ` and (${docTypes.map(type => `mimeType='${type}'`).join(' or ')})`;
+      } else if (selectedFileType === "spreadsheets") {
+        const sheetTypes = [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'application/vnd.google-apps.spreadsheet'
+        ];
+        fileTypeQuery = ` and (${sheetTypes.map(type => `mimeType='${type}'`).join(' or ')})`;
       } else {
         const allowedTypes = [
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -280,30 +295,38 @@ const GoogleDriveSearch = () => {
         ];
         fileTypeQuery = ` and (${allowedTypes.map(type => `mimeType='${type}'`).join(' or ')})`;
       }
+      
+      // Add file name filter
+      let nameQuery = "";
+      if (fileNameFilter === "enquiry") {
+        nameQuery = ` and name contains 'enquiry'`;
+      } else if (fileNameFilter === "po") {
+        nameQuery = ` and name contains 'po'`;
+      }
 
       if (isMultiQuery) {
         // For multi-query, use Google Drive's native search with all terms
         const searchTerms = queries.map(q => q.replace(/'/g, "\\'"));
         const fullTextQuery = searchTerms.map(term => `fullText contains '${term}'`).join(' and ');
-        const nameQuery = searchTerms.map(term => `name contains '${term}'`).join(' and ');
+        const nameSearchQuery = searchTerms.map(term => `name contains '${term}'`).join(' and ');
         
         if (fid === "root" && !selectedFolder) {
-          searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery} and ` +
-            `(${nameQuery} or ${fullTextQuery})`;
+          searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery}${nameQuery} and ` +
+            `(${nameSearchQuery} or ${fullTextQuery})`;
         } else {
           searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false and ` +
-            `(parents in '${folderIds.join("','")}'${folderIds.length > 0 ? ' or sharedWithMe=true' : ''})${fileTypeQuery} and ` +
-            `(${nameQuery} or ${fullTextQuery})`;
+            `(parents in '${folderIds.join("','")}'${folderIds.length > 0 ? ' or sharedWithMe=true' : ''})${fileTypeQuery}${nameQuery} and ` +
+            `(${nameSearchQuery} or ${fullTextQuery})`;
         }
       } else {
         // Single query - use existing logic
         const escapedQuery = queries[0].replace(/'/g, "\\'");
         if (fid === "root" && !selectedFolder) {
-          searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery} and ` +
+          searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery}${nameQuery} and ` +
             `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
         } else {
           searchQuery = `mimeType!='application/vnd.google-apps.folder' and trashed=false and ` +
-            `(parents in '${folderIds.join("','")}'${folderIds.length > 0 ? ' or sharedWithMe=true' : ''})${fileTypeQuery} and ` +
+            `(parents in '${folderIds.join("','")}'${folderIds.length > 0 ? ' or sharedWithMe=true' : ''})${fileTypeQuery}${nameQuery} and ` +
             `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
         }
       }
@@ -1070,8 +1093,8 @@ const GoogleDriveSearch = () => {
   };
 
   // Update the processAndCreateDoc function
-  const processAndCreateDoc = async () => {
-    if (results.length === 0 || !accessToken) return;
+  const processAndCreateDoc = async (filesToProcess = results) => {
+    if (filesToProcess.length === 0 || !accessToken) return;
 
     setIsProcessing(true);
     setIsInitializing(true);
@@ -1085,12 +1108,12 @@ const GoogleDriveSearch = () => {
       const extractedFiles = [];
 
       // Separate files by type first
-      const excelFileList = results.filter(file => 
+      const excelFileList = filesToProcess.filter(file => 
         file.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
         file.mimeType === 'application/vnd.ms-excel' ||
         file.mimeType === 'application/vnd.google-apps.spreadsheet'  // Add Google Sheets mime type
       );
-      const docResults = results.filter(file => 
+      const docResults = filesToProcess.filter(file => 
         !excelFileList.some(excel => excel.id === file.id)
       );
 
@@ -1596,6 +1619,25 @@ const GoogleDriveSearch = () => {
                 ))}
               </select>
             </div>
+            
+            {/* File Name Filter Dropdown */}
+            <div className="flex-1">
+              <label htmlFor="name-filter-select" className="block text-sm font-medium text-gray-700 mb-1">
+                File Name Filter
+              </label>
+              <select
+                id="name-filter-select"
+                value={fileNameFilter}
+                onChange={(e) => setFileNameFilter(e.target.value)}
+                className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white border-gray-300 text-gray-900`}
+              >
+                {nameFilters.map((filter) => (
+                  <option key={filter.value} value={filter.value}>
+                    {filter.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           
           {/* Search Tips */}
@@ -1631,38 +1673,59 @@ const GoogleDriveSearch = () => {
       {/* Action Buttons */}
       <div className="flex gap-2 mb-4 mt-4">
         {results.length > 0 && (
-          <button
-            onClick={processAndCreateDoc}
-            disabled={isProcessing || !accessToken}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition duration-300 disabled:bg-green-300 flex items-center space-x-2"
-          >
-            {isProcessing ? (
-              <>
-                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <div className="flex flex-col">
-                  <span>{processingStatus}</span>
-                  {processingProgress > 0 && (
-                    <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
-                      <div 
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                        style={{ width: `${processingProgress}%` }}
-                      ></div>
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
+          <>
+            <button
+              onClick={() => {
+                const filesToProcess = results;
+                processAndCreateDoc(filesToProcess);
+              }}
+              disabled={isProcessing || !accessToken}
+              className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition duration-300 disabled:bg-green-300 flex items-center space-x-2"
+            >
+              {isProcessing ? (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <div className="flex flex-col">
+                    <span>{processingStatus}</span>
+                    {processingProgress > 0 && (
+                      <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                        <div 
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                          style={{ width: `${processingProgress}%` }}
+                        ></div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  <span>Process All Files ({results.length})</span>
+                </>
+              )}
+            </button>
+            
+            {selectedFiles.length > 0 && (
+              <button
+                onClick={() => {
+                  const filesToProcess = results.filter(file => selectedFiles.includes(file.id));
+                  processAndCreateDoc(filesToProcess);
+                }}
+                disabled={isProcessing || !accessToken}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-300 disabled:bg-blue-300 flex items-center space-x-2"
+              >
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                <span>Extract & Download</span>
-              </>
+                <span>Process Selected ({selectedFiles.length})</span>
+              </button>
             )}
-          </button>
+          </>
         )}
 
         {lastDownloadedFile && (
@@ -1713,6 +1776,20 @@ const GoogleDriveSearch = () => {
               return (
                 <div key={result.id} className={`bg-white border-gray-100 hover:border-blue-200 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 border p-4 ${isMultiQuery ? 'ring-1 ring-green-200' : ''}`}>
                   <div className="flex items-center space-x-3">
+                    <div className="flex-shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={selectedFiles.includes(result.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedFiles([...selectedFiles, result.id]);
+                          } else {
+                            setSelectedFiles(selectedFiles.filter(id => id !== result.id));
+                          }
+                        }}
+                        className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                    </div>
                     <div className="flex-shrink-0">
                       <div className="relative">
                         <svg className="h-8 w-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

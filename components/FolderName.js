@@ -9,6 +9,7 @@ const FolderName = () => {
   const router = useRouter();
   const fid = typeof router.query.fid !== "undefined" ? router.query.fid : "root"; // Default to "root"
   const [fname, setFName] = useState("");
+  const [breadcrumb, setBreadcrumb] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const teamDriveId = config.directory.team_drive;
@@ -20,17 +21,38 @@ const FolderName = () => {
     const fetchData = async () => {
       const accessToken = localStorage.getItem("access_token");
       try {
-        const response = await axios.get(`https://www.googleapis.com/drive/v3/files/${fid}`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: {
-            corpora: corpora,
-            includeTeamDriveItems: true,
-            supportsAllDrives: true,
-            teamDriveId: teamDriveId,
-          },
-        });
+        const response = await axios.get(
+          `https://www.googleapis.com/drive/v3/files/${fid}`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            params: {
+              corpora: corpora,
+              includeTeamDriveItems: true,
+              supportsAllDrives: true,
+              teamDriveId: teamDriveId,
+            },
+          }
+        );
         const data = response.data;
-        setFName(data.name || "Root Folder"); // Use "Root Folder" for the root folder
+        setFName(data.name || "Root Folder");
+
+        // Build breadcrumb path
+        const path = [];
+        let currentId = fid;
+        while (currentId && currentId !== "root") {
+          const folderResponse = await axios.get(
+            `https://www.googleapis.com/drive/v3/files/${currentId}`,
+            {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              params: { fields: "name,parents", supportsAllDrives: true },
+            }
+          );
+          const folder = folderResponse.data;
+          path.unshift({ name: folder.name, id: currentId });
+          currentId = folder.parents?.[0];
+        }
+        setBreadcrumb(path);
+
         setLoaded(true);
         setLoading(false);
       } catch (err) {
@@ -78,6 +100,25 @@ const FolderName = () => {
             </span>
           </div>
         </div>
+
+        {breadcrumb.length > 0 && (
+          <div className="mt-3 text-sm text-gray-600">
+            <span className="font-bold text-xl">Path: </span>
+            {breadcrumb.map((folder, index) => (
+              <span key={folder.id}>
+                <button
+                  onClick={() => router.push(`/list/${folder.id}`)}
+                  className="font-bold text-xl hover:text-blue-600 hover:underline"
+                >
+                  {folder.name}
+                </button>
+                {index < breadcrumb.length - 1 && (
+                  <span className="mx-2">→</span>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* <div className="mt-6">
           <StatsCards />
