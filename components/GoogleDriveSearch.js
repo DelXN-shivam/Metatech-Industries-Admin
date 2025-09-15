@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useRouter } from "next/router";
 import config from '../config.json';
+import { useDebounce } from '../hooks/useDebounce';
 
 const GoogleDriveSearch = () => {
   const router = useRouter();
@@ -9,6 +10,11 @@ const GoogleDriveSearch = () => {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [liveSearchResults, setLiveSearchResults] = useState([]);
+  const [isLiveSearching, setIsLiveSearching] = useState(false);
+  const [showLiveResults, setShowLiveResults] = useState(false);
+  const [selectedLiveIndex, setSelectedLiveIndex] = useState(-1);
+  const debouncedQuery = useDebounce(query, 300);
   const [error, setError] = useState(null);
   const [fparent, setFParent] = useState(null);
   const [extractedDoc, setExtractedDoc] = useState(null);
@@ -72,6 +78,16 @@ const GoogleDriveSearch = () => {
       throw err;
     }
   };
+
+  // Live search effect
+  useEffect(() => {
+    if (debouncedQuery.trim().length >= 2 && accessToken) {
+      performLiveSearch(debouncedQuery);
+    } else {
+      setLiveSearchResults([]);
+      setShowLiveResults(false);
+    }
+  }, [debouncedQuery, selectedFolder, selectedFileType, fileNameFilter, accessToken]);
 
   // Add event listener for token validation
   useEffect(() => {
@@ -214,6 +230,114 @@ const GoogleDriveSearch = () => {
     }
 
     return allFolderIds;
+  };
+
+  // Live search function
+  const performLiveSearch = async (searchQuery) => {
+    if (!searchQuery.trim() || searchQuery.trim().length < 2) {
+      setLiveSearchResults([]);
+      setShowLiveResults(false);
+      return;
+    }
+
+    setIsLiveSearching(true);
+    
+    try {
+      // Use the existing Google Drive API directly for live search
+      const queries = searchQuery.split(',').map(q => q.trim()).filter(q => q.length > 0);
+      const isMultiQuery = queries.length > 1;
+      
+      // Build file type filter
+      let fileTypeQuery = "";
+      if (selectedFileType === "documents") {
+        const docTypes = [
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/msword',
+          'application/vnd.google-apps.document'
+        ];
+        fileTypeQuery = ` and (${docTypes.map(type => `mimeType='${type}'`).join(' or ')})`;
+      } else if (selectedFileType === "spreadsheets") {
+        const sheetTypes = [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'application/vnd.google-apps.spreadsheet'
+        ];
+        fileTypeQuery = ` and (${sheetTypes.map(type => `mimeType='${type}'`).join(' or ')})`;
+      } else {
+        const allowedTypes = [
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/msword',
+          'application/vnd.google-apps.document',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'application/vnd.google-apps.spreadsheet'
+        ];
+        fileTypeQuery = ` and (${allowedTypes.map(type => `mimeType='${type}'`).join(' or ')})`;
+      }
+      
+      // Add file name filter
+      let nameQuery = "";
+      if (fileNameFilter === "enquiry") {
+        nameQuery = ` and name contains 'enquiry'`;
+      } else if (fileNameFilter === "po") {
+        nameQuery = ` and name contains 'po'`;
+      }
+      
+      // Build search query
+      let searchQueryString;
+      const targetFolderId = selectedFolder || fid;
+      
+      if (isMultiQuery) {
+        const searchTerms = queries.map(q => q.replace(/'/g, "\\'"));
+        const fullTextQuery = searchTerms.map(term => `fullText contains '${term}'`).join(' and ');
+        const nameSearchQuery = searchTerms.map(term => `name contains '${term}'`).join(' and ');
+        
+        if (targetFolderId === "root" && !selectedFolder) {
+          searchQueryString = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery}${nameQuery} and ` +
+            `(${nameSearchQuery} or ${fullTextQuery})`;
+        } else {
+          searchQueryString = `mimeType!='application/vnd.google-apps.folder' and trashed=false and ` +
+            `parents in '${targetFolderId}'${fileTypeQuery}${nameQuery} and ` +
+            `(${nameSearchQuery} or ${fullTextQuery})`;
+        }
+      } else {
+        const escapedQuery = queries[0].replace(/'/g, "\\'");
+        if (targetFolderId === "root" && !selectedFolder) {
+          searchQueryString = `mimeType!='application/vnd.google-apps.folder' and trashed=false${fileTypeQuery}${nameQuery} and ` +
+            `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
+        } else {
+          searchQueryString = `mimeType!='application/vnd.google-apps.folder' and trashed=false and ` +
+            `parents in '${targetFolderId}'${fileTypeQuery}${nameQuery} and ` +
+            `(name contains '${escapedQuery}' or fullText contains '${escapedQuery}')`;
+        }
+      }
+      
+      const response = await makeAuthenticatedRequest(() => {
+        const currentToken = localStorage.getItem('access_token');
+        return axios.get("https://www.googleapis.com/drive/v3/files", {
+          headers: { Authorization: `Bearer ${currentToken}` },
+          params: {
+            q: searchQueryString,
+            fields: "files(id,name,mimeType,size,modifiedTime)",
+            pageSize: 20,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+            corpora: 'allDrives'
+          },
+        });
+      });
+      
+      const files = response.data.files || [];
+      setLiveSearchResults(files);
+      setShowLiveResults(true);
+      
+    } catch (error) {
+      console.error('Live search error:', error);
+      setLiveSearchResults([]);
+      setShowLiveResults(false);
+    } finally {
+      setIsLiveSearching(false);
+    }
   };
 
   // Parse multiple queries from comma-separated input
@@ -435,7 +559,27 @@ const GoogleDriveSearch = () => {
   };
 
   const handleKeyPress = (event) => {
-    if (event.key === "Enter") {
+    if (showLiveResults && liveSearchResults.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSelectedLiveIndex(prev => 
+          prev < Math.min(liveSearchResults.length - 1, 9) ? prev + 1 : prev
+        );
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSelectedLiveIndex(prev => prev > 0 ? prev - 1 : -1);
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (selectedLiveIndex >= 0 && selectedLiveIndex < liveSearchResults.length) {
+          handleLiveResultSelect(liveSearchResults[selectedLiveIndex]);
+        } else {
+          searchFiles();
+        }
+      } else if (event.key === "Escape") {
+        setShowLiveResults(false);
+        setSelectedLiveIndex(-1);
+      }
+    } else if (event.key === "Enter") {
       searchFiles();
     }
   };
@@ -443,11 +587,67 @@ const GoogleDriveSearch = () => {
   const clearSearch = () => {
     setQuery("");
     setResults([]);
+    setLiveSearchResults([]);
+    setShowLiveResults(false);
     setExtractedDoc(null);
     setSearchError(null);
     setSelectedFolder("");
     setSelectedFileType("");
   };
+
+  // Handle search input change
+  const handleSearchInputChange = (e) => {
+    const value = e.target.value;
+    setQuery(value);
+    setSearchError(null);
+    setSelectedLiveIndex(-1);
+    
+    // Hide live results if query is too short
+    if (value.trim().length < 2) {
+      setShowLiveResults(false);
+      setLiveSearchResults([]);
+    }
+  };
+
+  // Handle live result selection
+  const handleLiveResultSelect = (file) => {
+    setResults([file]);
+    setShowLiveResults(false);
+    setSelectedLiveIndex(-1);
+    setQuery(file.name);
+  };
+
+  // Add file from dropdown to main results
+  const addFileToResults = (file) => {
+    const isAlreadyAdded = results.some(result => result.id === file.id);
+    if (!isAlreadyAdded) {
+      setResults(prev => [...prev, file]);
+    }
+    setShowLiveResults(false);
+  };
+
+  // Add all live search results to main results
+  const addAllLiveResults = () => {
+    const newFiles = liveSearchResults.filter(liveFile => 
+      !results.some(result => result.id === liveFile.id)
+    );
+    setResults(prev => [...prev, ...newFiles]);
+    setShowLiveResults(false);
+  };
+
+  // Handle click outside to close live results
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!event.target.closest('.search-container')) {
+        setShowLiveResults(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const navigateBack = () => {
     clearSearch();
@@ -895,24 +1095,28 @@ const GoogleDriveSearch = () => {
       const batch = batches[i];
       const batchPromises = batch.map(async file => {
         try {
+          console.log(`📄 Processing: ${file.name} (${file.mimeType})`);
           const result = await extractContentFromFile(file.id, file.name, file.mimeType);
+          
           // Ensure we have valid content
           if (!result || !result.content) {
-            console.warn(`No content extracted from ${file.name}`);
+            console.warn(`⚠️ No content extracted from ${file.name}`);
             return {
               fileName: file.name,
-              extractedText: `No content could be extracted from this file.`
+              extractedText: `[${file.name}]\n\nNo content could be extracted from this file. The file may be empty, corrupted, or in an unsupported format.`
             };
           }
+          
+          console.log(`✅ Successfully processed: ${file.name} (${result.content.length} chars)`);
           return {
             fileName: file.name,
             extractedText: result.content
           };
         } catch (err) {
-          console.error(`Error processing ${file.name}:`, err);
+          console.error(`❌ Error processing ${file.name}:`, err);
           return {
             fileName: file.name,
-            extractedText: `Error processing file: ${err.message}`
+            extractedText: `[${file.name}]\n\nError processing file: ${err.message}\n\nPlease check if the file is accessible and not corrupted.`
           };
         }
       });
@@ -936,6 +1140,10 @@ const GoogleDriveSearch = () => {
     try {
       let content = '';
       const accessToken = localStorage.getItem("access_token");
+      
+      if (!accessToken) {
+        throw new Error('No access token available. Please authenticate.');
+      }
 
       // Get metadata for all file types first with supportsAllDrives
       const metadataResponse = await retryRequest(() =>
@@ -1049,32 +1257,27 @@ const GoogleDriveSearch = () => {
           });
           
           if (!extractResponse.ok) {
-            const errorData = await extractResponse.json();
-            throw new Error(errorData.error || 'Failed to extract text');
+            const errorText = await extractResponse.text();
+            console.error('Extract API error:', errorText);
+            throw new Error(`Failed to extract text: ${extractResponse.status}`);
           }
           
           const data = await extractResponse.json();
-          content = data.extractedText;
+          content = data.extractedText || '';
           
-          // If content is empty or very short for a .doc file, try fallback method
-          if (mimeType === 'application/msword' && (!content || content.length < 50)) {
-            console.log("API extraction returned little content for .doc file, trying fallback...");
-            const fallbackContent = generateFallbackContent(metadata,
-              "Limited text could be extracted from this .doc file. It may be in an older format or contain mostly images.");
-            return { fileName, content: fallbackContent };
+          console.log(`✅ Extracted ${content.length} characters from ${fileName}`);
+          
+          // If content is empty or very short, provide meaningful fallback
+          if (!content || content.trim().length < 10) {
+            console.warn(`⚠️ Little content extracted from ${fileName} (${content.length} chars)`);
+            content = generateFallbackContent(metadata,
+              "Limited text could be extracted from this file. It may be in an older format, contain mostly images, or be password protected.");
           }
         } catch (err) {
-          console.error(`Error processing file ${fileName} through API:`, err);
-          
-          // Special fallback for .doc files
-          if (mimeType === 'application/msword') {
-            const fallbackContent = generateFallbackContent(metadata,
-              `This .doc file could not be processed automatically. It may be in an older format or contain complex formatting. Error: ${err.message}`);
-            return { fileName, content: fallbackContent };
-          }
+          console.error(`❌ Error processing file ${fileName}:`, err);
           
           content = generateFallbackContent(metadata,
-            `Error extracting text: ${err.message}`);
+            `Error extracting text: ${err.message}. The file may be corrupted, password protected, or in an unsupported format.`);
         }
       } else {
         // For unsupported file types, use the existing fallback
@@ -1094,7 +1297,14 @@ const GoogleDriveSearch = () => {
 
   // Update the processAndCreateDoc function
   const processAndCreateDoc = async (filesToProcess = results) => {
-    if (filesToProcess.length === 0 || !accessToken) return;
+    if (filesToProcess.length === 0 || !accessToken) {
+      console.error('❌ Cannot process: No files or no access token');
+      return;
+    }
+
+    console.log('🚀 Starting document processing...');
+    console.log('- Files to process:', filesToProcess.length);
+    console.log('- File types:', filesToProcess.map(f => ({ name: f.name, type: f.mimeType })));
 
     setIsProcessing(true);
     setIsInitializing(true);
@@ -1186,36 +1396,53 @@ const GoogleDriveSearch = () => {
 
       // Process document files in parallel batches
       if (docResults.length > 0) {
+        console.log('📄 Processing document files:', docResults.length);
         setProcessingStatus('Processing documents...');
         try {
           const processedDocs = await processFilesInBatches(docResults);
+          console.log('📄 Batch processing completed. Results:', processedDocs.length);
           
           // Validate and clean the processed documents
           const validDocs = processedDocs
-            .filter(doc => doc && doc.fileName && doc.extractedText)
+            .filter(doc => {
+              const isValid = doc && doc.fileName && doc.extractedText;
+              if (!isValid) {
+                console.warn('⚠️ Invalid doc found:', doc);
+              }
+              return isValid;
+            })
             .map(doc => ({
               fileName: doc.fileName,
               extractedText: doc.extractedText.trim() || 'No content available'
             }));
+          
+          console.log('✅ Valid documents after filtering:', validDocs.length);
 
           if (validDocs.length === 0) {
-            console.warn('No valid documents found, checking for any processed content...');
+            console.warn('⚠️ No valid documents found, checking for any processed content...');
             // Try to use any processed content, even if empty
             const fallbackDocs = processedDocs
-              .filter(doc => doc && doc.fileName)
+              .filter(doc => {
+                const hasFileName = doc && doc.fileName;
+                if (!hasFileName) {
+                  console.warn('⚠️ Doc missing fileName:', doc);
+                }
+                return hasFileName;
+              })
               .map(doc => ({
                 fileName: doc.fileName,
-                extractedText: doc.extractedText || 'No content available'
+                extractedText: doc.extractedText || '[No content could be extracted from this file]'
               }));
 
             if (fallbackDocs.length > 0) {
-              console.log('Using fallback documents:', fallbackDocs.length);
+              console.log('🔄 Using fallback documents:', fallbackDocs.length);
               extractedFiles.push(...fallbackDocs);
             } else {
+              console.error('❌ No documents could be processed at all');
               throw new Error('No documents could be processed. Please check file permissions and try again.');
             }
           } else {
-            console.log('Valid documents found:', validDocs.length);
+            console.log('✅ Using valid documents:', validDocs.length);
             extractedFiles.push(...validDocs);
           }
         } catch (error) {
@@ -1492,23 +1719,120 @@ const GoogleDriveSearch = () => {
     <div className="w-full text-left p-4 text-gray-800">
       {/* Search Input */}
       <div className="flex gap-2">
-        <div className="relative flex-1">
+        <div className="relative flex-1 search-container">
           <input
             type="text"
             value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSearchError(null);
-            }}
+            onChange={handleSearchInputChange}
             onKeyPress={handleKeyPress}
+            onFocus={() => {
+              if (query.trim().length >= 2 && liveSearchResults.length > 0) {
+                setShowLiveResults(true);
+              }
+            }}
+            onBlur={(e) => {
+              // Don't hide results if clicking on a result
+              if (!e.relatedTarget?.closest('.search-container')) {
+                setTimeout(() => setShowLiveResults(false), 150);
+              }
+            }}
             className={`w-full p-3 pl-10 border ${searchError ? 'border-red-500' : 'border-gray-300 bg-white text-gray-900'} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
             placeholder="Search in file names and content... (Use commas to search for multiple terms: term1, term2, term3)"
           />
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+            {isLiveSearching ? (
+              <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            ) : (
+              <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            )}
           </div>
+          
+          {/* Live Search Results Dropdown */}
+          {showLiveResults && liveSearchResults.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto">
+              <div className="p-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                <span className="text-xs text-gray-600 font-medium">
+                  {liveSearchResults.length} files found
+                  {parseQueries(query).length > 1 && (
+                    <span className="text-blue-600 ml-1">
+                      (containing all terms: {parseQueries(query).join(', ')})
+                    </span>
+                  )}
+                </span>
+                <button
+                  onClick={addAllLiveResults}
+                  className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 transition-colors"
+                  title="Add all files to results"
+                >
+                  Add All
+                </button>
+              </div>
+              {liveSearchResults.slice(0, 10).map((file, index) => {
+                const isAlreadyAdded = results.some(result => result.id === file.id);
+                return (
+                  <div
+                    key={file.id}
+                    className={`border-b border-gray-100 last:border-b-0 ${
+                      selectedLiveIndex === index 
+                        ? 'bg-blue-50 border-blue-200' 
+                        : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-3 p-3">
+                      <div className="flex-shrink-0">
+                        <svg className="h-6 w-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </div>
+                      <div 
+                        className="flex-1 min-w-0 cursor-pointer"
+                        onClick={() => handleLiveResultSelect(file)}
+                      >
+                        <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {file.mimeType.includes('document') ? 'Document' : 
+                           file.mimeType.includes('spreadsheet') ? 'Spreadsheet' : 'File'}
+                          {file.modifiedTime && (
+                            <span className="ml-2">
+                              • Modified {new Date(file.modifiedTime).toLocaleDateString()}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex-shrink-0">
+                        {isAlreadyAdded ? (
+                          <span className="text-xs text-green-600 font-medium">Added</span>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              addFileToResults(file);
+                            }}
+                            className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 transition-colors"
+                            title="Add to results"
+                          >
+                            Add
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {liveSearchResults.length > 10 && (
+                <div className="p-3 text-center border-t border-gray-100 bg-gray-50">
+                  <span className="text-xs text-gray-600">
+                    +{liveSearchResults.length - 10} more files. Press Enter to see all results.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Search Button */}
@@ -1546,6 +1870,29 @@ const GoogleDriveSearch = () => {
           <span>Clear</span>
         </button>
       </div>
+
+      {/* Live Search Status */}
+      {query.trim().length >= 2 && (
+        <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+          <div className="flex items-center space-x-2">
+            <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span className="text-sm font-medium text-green-800">
+              Live Search Active
+              {isLiveSearching && <span className="ml-2 text-green-600">(Searching...)</span>}
+            </span>
+          </div>
+          <p className="text-xs text-green-600 mt-1">
+            {liveSearchResults.length > 0 ? (
+              <>Found {liveSearchResults.length} files matching "{query}"</>
+            ) : (
+              <>Type to see instant results as you search</>
+            )}
+          </p>
+
+        </div>
+      )}
 
       {/* Multi-Query Indicator */}
       {parseQueries(query).length > 1 && (
@@ -1644,10 +1991,13 @@ const GoogleDriveSearch = () => {
           <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
             <h4 className="text-sm font-medium text-gray-700 mb-2">Search Tips:</h4>
             <ul className="text-xs text-gray-600 space-y-1">
+              <li>• <strong>Live Search:</strong> Results appear instantly as you type (2+ characters)</li>
+              <li>• <strong>Keyboard Navigation:</strong> Use ↑↓ arrows to navigate, Enter to select, Esc to close</li>
               <li>• <strong>Single term:</strong> "contract" - finds files containing "contract"</li>
               <li>• <strong>Multiple terms:</strong> "contract, agreement, 2024" - finds files containing ALL three terms</li>
-              <li>• <strong>Exact phrases:</strong> Use quotes for exact matches</li>
-              <li>• <strong>Performance:</strong> Multi-query search may take longer as it analyzes file content</li>
+              <li>• <strong>Quick Select:</strong> Click on live results to select files instantly</li>
+              <li>• <strong>Full Search:</strong> Press Enter or click Search for complete results with processing options</li>
+              <li>• <strong>Performance:</strong> Results are cached for faster subsequent searches</li>
             </ul>
           </div>
         </div>
